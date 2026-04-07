@@ -14,6 +14,22 @@ local function metadataMatches(a, b)
     return json.encode(a or {}) == json.encode(b or {})
 end
 
+local function getMaxStack(itemName)
+    local def = Items[itemName]
+    if not def then return 1 end
+
+    local stack = tonumber(def.stack)
+    if not stack or stack < 1 then
+        return 1
+    end
+
+    return stack
+end
+
+local function isStackable(itemName)
+    return getMaxStack(itemName) > 1
+end
+
 function CalculateInventoryWeight(inv)
     local total = 0
 
@@ -118,34 +134,53 @@ function AddItem(inv, itemName, amount, metadata, slot)
         return false, 'invalid item'
     end
 
-    if def.stack then
+    local maxStack = getMaxStack(itemName)
+
+    if maxStack > 1 then
         for existingSlot, existingItem in pairs(inv.items) do
             if existingItem.name == itemName and metadataMatches(existingItem.metadata, metadata) then
-                existingItem.amount = existingItem.amount + amount
-                SaveSlot(inv, existingSlot)
-                return true, existingSlot
+                local spaceLeft = maxStack - existingItem.amount
+
+                if spaceLeft > 0 then
+                    local toAdd = math.min(spaceLeft, amount)
+                    existingItem.amount = existingItem.amount + toAdd
+                    amount = amount - toAdd
+                    SaveSlot(inv, existingSlot)
+
+                    if amount <= 0 then
+                        return true, existingSlot
+                    end
+                end
             end
         end
     end
 
-    slot = slot or FindOpenSlot(inv)
-    if not slot then
-        return false, 'no open slot'
+    while amount > 0 do
+        slot = slot or FindOpenSlot(inv)
+        if not slot then
+            return false, 'no open slot'
+        end
+
+        if inv.items[slot] then
+            return false, 'slot occupied'
+        end
+
+        local toPlace = math.min(amount, maxStack)
+
+        inv.items[slot] = {
+            name = itemName,
+            amount = toPlace,
+            metadata = metadata,
+            durability = def.durability and 100 or nil
+        }
+
+        SaveSlot(inv, slot)
+
+        amount = amount - toPlace
+        slot = nil
     end
 
-    if inv.items[slot] then
-        return false, 'slot occupied'
-    end
-
-    inv.items[slot] = {
-        name = itemName,
-        amount = amount,
-        metadata = metadata,
-        durability = def.durability and 100 or nil
-    }
-
-    SaveSlot(inv, slot)
-    return true, slot
+    return true, true
 end
 
 function MoveItemInsideInventory(inv, fromSlot, toSlot, amount)
@@ -193,13 +228,21 @@ function MoveItemInsideInventory(inv, fromSlot, toSlot, amount)
 
     local sameMeta = json.encode(targetItem.metadata or {}) == json.encode(sourceItem.metadata or {})
 
-    if targetItem.name == sourceItem.name and sourceDef.stack and sameMeta then
-        targetItem.amount = targetItem.amount + amount
+    local maxStack = getMaxStack(sourceItem.name)
 
-        if amount == sourceItem.amount then
+    if targetItem.name == sourceItem.name and maxStack > 1 and sameMeta then
+        local spaceLeft = maxStack - targetItem.amount
+        if spaceLeft <= 0 then
+            return false, 'target stack is full'
+        end
+
+        local toMove = math.min(spaceLeft, amount)
+        targetItem.amount = targetItem.amount + toMove
+
+        if toMove == sourceItem.amount then
             inv.items[fromSlot] = nil
         else
-            sourceItem.amount = sourceItem.amount - amount
+            sourceItem.amount = sourceItem.amount - toMove
         end
 
         SaveSlot(inv, fromSlot)
@@ -253,6 +296,11 @@ function SplitItemToFreeSlot(inv, fromSlot, amount)
 
     if amount >= sourceItem.amount then
         return false, 'amount too large'
+    end
+
+    local maxStack = getMaxStack(sourceItem.name)
+    if amount > maxStack then
+        return false, 'amount exceeds max stack size'
     end
 
     local newSlot = FindOpenSlot(inv)
@@ -336,6 +384,12 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
     local targetItem = toInv.items[toSlot]
 
     if not targetItem then
+        local maxStack = getMaxStack(sourceItem.name)
+
+        if amount > maxStack then
+            return false, 'amount exceeds max stack size'
+        end
+
         toInv.items[toSlot] = {
             name = sourceItem.name,
             amount = amount,
@@ -356,17 +410,25 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
 
     local sameMeta = json.encode(targetItem.metadata or {}) == json.encode(sourceItem.metadata or {})
 
-    if targetItem.name == sourceItem.name and sourceDef.stack and sameMeta then
-        targetItem.amount = targetItem.amount + amount
+    local maxStack = getMaxStack(sourceItem.name)
 
-        if amount == sourceItem.amount then
-            fromInv.items[fromSlot] = nil
-        else
-            sourceItem.amount = sourceItem.amount - amount
+    if targetItem.name == sourceItem.name and maxStack > 1 and sameMeta then
+        local spaceLeft = maxStack - targetItem.amount
+        if spaceLeft <= 0 then
+            return false, 'target stack is full'
         end
 
-        SaveSlot(fromInv, fromSlot)
-        SaveSlot(toInv, toSlot)
+        local toMove = math.min(spaceLeft, amount)
+        targetItem.amount = targetItem.amount + toMove
+
+        if toMove == sourceItem.amount then
+            inv.items[fromSlot] = nil
+        else
+            sourceItem.amount = sourceItem.amount - toMove
+        end
+
+        SaveSlot(inv, fromSlot)
+        SaveSlot(inv, toSlot)
         return true
     end
 

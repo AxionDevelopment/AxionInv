@@ -223,3 +223,34 @@ lib.callback.register('ax_inventory:server:moveItemBetween', function(source, da
         secondaryInventory = secondaryInv and Inventory.BuildPayload(secondaryInv) or nil
     }
 end)
+
+lib.callback.register('ax_inventory:server:moveSecondaryItem', function(source, fromSlot, toSlot, amount, secondaryType, secondaryKey)
+    fromSlot = tonumber(fromSlot)
+    toSlot = tonumber(toSlot)
+    amount = tonumber(amount)
+
+    if not fromSlot or not toSlot then
+        return { ok = false, error = 'invalid slots' }
+    end
+
+    local inv = nil
+
+    if secondaryType == 'drop' and secondaryKey then
+        inv = GetInventory('drop', secondaryKey, 'drop')
+    end
+
+    if not inv then
+        return { ok = false, error = 'secondary inventory not found' }
+    end
+
+    local success, err = MoveItemInsideInventory(inv, fromSlot, toSlot, amount)
+
+    if not success then
+        return { ok = false, error = err }
+    end
+
+    return {
+        ok = true,
+        inventory = Inventory.BuildPayload(inv)
+    }
+end)

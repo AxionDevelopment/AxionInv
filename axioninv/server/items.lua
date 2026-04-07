@@ -16,7 +16,6 @@ ItemHandlers.water = function(src, inv, slot, item)
     end
 
     exports['AxionNotifications']:AxionNotify(src, "You drank some water.", "info", 5000)
-    TriggerClientEvent('ax_inventory:client:notify', src, 'You drank some water.')
     return buildUseResponse(inv)
 end
 
@@ -27,7 +26,7 @@ ItemHandlers.bandage = function(src, inv, slot, item)
     end
 
     exports['AxionNotifications']:AxionNotify(src, "You used a bandage.", "info", 5000)
-    TriggerClientEvent('ax_inventory:client:notify', src, 'You used a bandage.')
+    TriggerClientEvent('ax_inventory:client:bandageUsed', src)
     return buildUseResponse(inv)
 end
 

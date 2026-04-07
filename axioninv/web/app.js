@@ -11,6 +11,9 @@ const splitPrompt = document.getElementById('splitPrompt');
 const splitAmountInput = document.getElementById('splitAmountInput');
 const splitConfirmBtn = document.getElementById('splitConfirmBtn');
 const splitCancelBtn = document.getElementById('splitCancelBtn');
+const contextUseBtn = document.getElementById('contextUseBtn');
+const contextSplitOneBtn = document.getElementById('contextSplitOneBtn');
+const contextSplitCustomBtn = document.getElementById('contextSplitCustomBtn');
 
 let playerInventory = null;
 let secondaryInventory = null;
@@ -20,19 +23,36 @@ let itemDefs = {};
 
 let dragging = false;
 let draggedSlot = null;
+let draggedPanel = null;
 let dragGhost = null;
 let hoverSlot = null;
+let hoverPanel = null;
 let dragAmount = null;
 let dragMode = 'full';
-let draggedPanel = null;
 
 let rightMouseDown = false;
 let rightMouseDownSlot = null;
+let rightMouseDownPanel = null;
 let rightMouseStartX = 0;
 let rightMouseStartY = 0;
 let rightClickMoved = false;
 
 let contextMenuSlot = null;
+
+function resetDragState() {
+    dragging = false;
+    draggedSlot = null;
+    draggedPanel = null;
+    hoverSlot = null;
+    hoverPanel = null;
+    dragAmount = null;
+    dragMode = 'full';
+    rightMouseDown = false;
+    rightMouseDownSlot = null;
+    rightMouseDownPanel = null;
+    rightClickMoved = false;
+    removeDragGhost();
+}
 
 function getInventoryByPanel(panel) {
     if (panel === 'player') return playerInventory;
@@ -61,10 +81,6 @@ async function nui(action, data = {}) {
     return await res.json();
 }
 
-function getItemAtSlot(slot) {
-    return inventory?.items?.[String(slot)] || null;
-}
-
 function hideContextMenu() {
     contextMenu.classList.add('hidden');
     contextMenuSlot = null;
@@ -72,6 +88,24 @@ function hideContextMenu() {
 
 function showContextMenu(slot, x, y) {
     contextMenuSlot = slot;
+
+    const item = getItemAt('player', slot);
+    const def = item ? (itemDefs[item.name] || {}) : {};
+    const maxStack = Number(def.stack) || 1;
+    const canSplit = maxStack > 1 && item && Number(item.amount) > 1;
+
+    if (contextUseBtn) {
+        contextUseBtn.style.display = def.usable === false ? 'none' : '';
+    }
+
+    if (contextSplitOneBtn) {
+        contextSplitOneBtn.style.display = canSplit ? '' : 'none';
+    }
+
+    if (contextSplitCustomBtn) {
+        contextSplitCustomBtn.style.display = canSplit ? '' : 'none';
+    }
+
     contextMenu.style.left = `${x}px`;
     contextMenu.style.top = `${y}px`;
     contextMenu.classList.remove('hidden');
@@ -115,14 +149,6 @@ function removeDragGhost() {
     if (dragGhost) {
         dragGhost.remove();
         dragGhost = null;
-    }
-}
-
-async function refreshInventory() {
-    const result = await nui('getInventory');
-    if (result?.ok && result.inventory) {
-        inventory = result.inventory;
-        render();
     }
 }
 
@@ -194,10 +220,11 @@ function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
                     dragMode = 'full';
                     dragAmount = Number(item.amount) || 1;
 
-                    createDragGhost({
-                        ...item,
-                        amount: dragAmount
-                    }, event.clientX, event.clientY);
+                    createDragGhost(
+                        { ...item, amount: dragAmount },
+                        event.clientX,
+                        event.clientY
+                    );
 
                     render();
                     return;
@@ -226,9 +253,6 @@ function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
         gridEl.appendChild(slotEl);
     }
 }
-
-let hoverPanel = null;
-let rightMouseDownPanel = null;
 
 function render() {
     renderInventoryPanel('player', playerSlotGrid, playerInventory, playerWeightText);
@@ -264,7 +288,51 @@ async function handleDrop(targetPanel, targetSlot) {
         return;
     }
 
-    const result = await nui('moveItemBetween', {
+    let result = null;
+
+    // same inventory panel
+    if (fromPanel === toPanel) {
+        if (fromPanel === 'player') {
+            result = await nui('moveItem', {
+                fromSlot,
+                toSlot,
+                amount
+            });
+
+            if (!result || !result.ok) {
+                console.log('move failed:', result?.error || 'unknown error');
+                render();
+                return;
+            }
+
+            playerInventory = result.inventory;
+            render();
+            return;
+        }
+
+        if (fromPanel === 'secondary') {
+            result = await nui('moveSecondaryItem', {
+                fromSlot,
+                toSlot,
+                amount,
+                secondaryType,
+                secondaryKey
+            });
+
+            if (!result || !result.ok) {
+                console.log('move failed:', result?.error || 'unknown error');
+                render();
+                return;
+            }
+
+            secondaryInventory = result.inventory;
+            render();
+            return;
+        }
+    }
+
+    // between inventories
+    result = await nui('moveItemBetween', {
         fromPanel,
         fromSlot,
         toPanel,
@@ -286,6 +354,14 @@ async function handleDrop(targetPanel, targetSlot) {
 }
 
 window.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+});
+
+document.addEventListener('dragstart', (event) => {
+    event.preventDefault();
+});
+
+document.addEventListener('drop', (event) => {
     event.preventDefault();
 });
 
@@ -311,10 +387,11 @@ document.addEventListener('mousemove', (event) => {
                     dragAmount = half;
                     rightClickMoved = true;
 
-                    createDragGhost({
-                        ...item,
-                        amount: dragAmount
-                    }, event.clientX, event.clientY);
+                    createDragGhost(
+                        { ...item, amount: dragAmount },
+                        event.clientX,
+                        event.clientY
+                    );
                 }
             }
         }
@@ -372,7 +449,7 @@ contextMenu.addEventListener('click', async (event) => {
     if (!action || !contextMenuSlot) return;
 
     const slot = contextMenuSlot;
-    const item = getItemAtSlot(slot);
+    const item = getItemAt('player', slot);
     hideContextMenu();
 
     if (!item) return;
@@ -380,7 +457,7 @@ contextMenu.addEventListener('click', async (event) => {
     if (action === 'use') {
         const result = await nui('useItem', { slot });
         if (result?.ok && result.inventory) {
-            inventory = result.inventory;
+            playerInventory = result.inventory;
             render();
         }
         return;
@@ -389,7 +466,7 @@ contextMenu.addEventListener('click', async (event) => {
     if (action === 'drop') {
         const result = await nui('dropItem', { slot, amount: item.amount });
         if (result?.ok && result.inventory) {
-            inventory = result.inventory;
+            playerInventory = result.inventory;
             render();
         }
         return;
@@ -398,7 +475,7 @@ contextMenu.addEventListener('click', async (event) => {
     if (action === 'splitOne') {
         const result = await nui('splitOne', { slot });
         if (result?.ok && result.inventory) {
-            inventory = result.inventory;
+            playerInventory = result.inventory;
             render();
         }
         return;
@@ -412,7 +489,7 @@ contextMenu.addEventListener('click', async (event) => {
 
 splitConfirmBtn.addEventListener('click', async () => {
     const slot = contextMenuSlot;
-    const item = getItemAtSlot(slot);
+    const item = getItemAt('player', slot);
     const amount = Number(splitAmountInput.value);
 
     hideSplitPrompt();
@@ -423,7 +500,7 @@ splitConfirmBtn.addEventListener('click', async () => {
 
     const result = await nui('splitCustom', { slot, amount });
     if (result?.ok && result.inventory) {
-        inventory = result.inventory;
+        playerInventory = result.inventory;
         render();
     }
 });
@@ -432,34 +509,31 @@ splitCancelBtn.addEventListener('click', () => {
     hideSplitPrompt();
 });
 
-closeBtn.addEventListener('click', async () => {
-    dragging = false;
-    draggedSlot = null;
-    hoverSlot = null;
-    dragAmount = null;
-    dragMode = 'full';
-    rightMouseDown = false;
-    rightMouseDownSlot = null;
-    rightClickMoved = false;
+closeBtn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    resetDragState();
     hideContextMenu();
     hideSplitPrompt();
-    removeDragGhost();
+
     await nui('close');
 });
 
 window.addEventListener('keydown', async (event) => {
     if (event.key === 'Escape') {
-        dragging = false;
-        draggedSlot = null;
-        hoverSlot = null;
-        dragAmount = null;
-        dragMode = 'full';
-        rightMouseDown = false;
-        rightMouseDownSlot = null;
-        rightClickMoved = false;
+        resetDragState();
         hideContextMenu();
         hideSplitPrompt();
-        removeDragGhost();
+        await nui('close');
+    }
+});
+
+window.addEventListener('keydown', async (event) => {
+    if (event.key === 'Tab') {
+        resetDragState();
+        hideContextMenu();
+        hideSplitPrompt();
         await nui('close');
     }
 });
@@ -483,14 +557,18 @@ window.addEventListener('message', (event) => {
         secondaryInventory = null;
         secondaryType = null;
         secondaryKey = null;
+        resetDragState();
+        hideContextMenu();
+        hideSplitPrompt();
         app.classList.add('hidden');
         return;
     }
 
     if (data.action === 'setInventory') {
-        inventory = data.inventory;
+        playerInventory = data.inventory;
         itemDefs = data.items || {};
         render();
+        return;
     }
 
     if (data.action === 'openDropInventory') {
@@ -503,4 +581,10 @@ window.addEventListener('message', (event) => {
         render();
         return;
     }
+});
+
+window.addEventListener('blur', () => {
+    resetDragState();
+    hideContextMenu();
+    hideSplitPrompt();
 });

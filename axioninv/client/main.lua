@@ -1,6 +1,15 @@
 local inventoryOpen = false
 WorldDrops = WorldDrops or {}
 
+local function forceCloseInventory()
+    inventoryOpen = false
+    SetNuiFocus(false, false)
+
+    SendNUIMessage({
+        action = 'close'
+    })
+end
+
 local function openInventory()
     if inventoryOpen then return end
 
@@ -22,14 +31,7 @@ local function openInventory()
 end
 
 local function closeInventory()
-    if not inventoryOpen then return end
-
-    inventoryOpen = false
-    SetNuiFocus(false, false)
-
-    SendNUIMessage({
-        action = 'close'
-    })
+    forceCloseInventory()
 end
 
 RegisterCommand('+openinventory', function()
@@ -42,12 +44,11 @@ end, false)
 RegisterKeyMapping('+openinventory', 'Open Inventory', 'keyboard', 'TAB')
 
 RegisterCommand('invtest', function(source, args, raw)
-
     TriggerServerEvent('ax_inventory:server:testAdd', args[1])
 end, false)
 
 RegisterNUICallback('close', function(_, cb)
-    closeInventory()
+    forceCloseInventory()
     cb({ ok = true })
 end)
 
@@ -62,8 +63,10 @@ RegisterNUICallback('moveItem', function(data, cb)
     end, data.fromSlot, data.toSlot, data.amount)
 end)
 
-RegisterNetEvent('ax_inventory:client:forceClose', function()
-    closeInventory()
+RegisterNUICallback('moveItemBetween', function(data, cb)
+    lib.callback('ax_inventory:server:moveItemBetween', false, function(result)
+        cb(result or { ok = false, error = 'no response' })
+    end, data)
 end)
 
 RegisterNUICallback('getInventory', function(_, cb)
@@ -99,6 +102,19 @@ RegisterNUICallback('splitCustom', function(data, cb)
     lib.callback('ax_inventory:server:splitCustom', false, function(result)
         cb(result or { ok = false, error = 'no response' })
     end, data.slot, data.amount)
+end)
+
+RegisterNetEvent('ax_inventory:client:forceClose', function()
+    forceCloseInventory()
+end)
+
+RegisterNetEvent('ax_inventory:client:bandageUsed', function()
+    local playerPed = PlayerPedId()
+
+    local currentHealth = GetEntityHealth(playerPed)
+
+    local newHealth = currentHealth + 20
+    SetEntityHealth(playerPed, newHealth)
 end)
 
 RegisterNetEvent('ax_inventory:client:syncDrops', function(drops)
@@ -146,6 +162,7 @@ CreateThread(function()
                     DisplayHelpTextFromStringLabel(0, false, true, -1)
 
                     if IsControlJustPressed(0, 38) then
+                        inventoryOpen = true
                         TriggerServerEvent('ax_inventory:server:openDrop', dropKey)
                     end
                 end
@@ -159,6 +176,7 @@ end)
 RegisterNetEvent('ax_inventory:client:openSecondaryInventory', function(data)
     if not data or not data.inventory or not data.playerInventory then return end
 
+    inventoryOpen = true
     SetNuiFocus(true, true)
 
     SendNUIMessage({
@@ -171,8 +189,8 @@ RegisterNetEvent('ax_inventory:client:openSecondaryInventory', function(data)
     })
 end)
 
-RegisterNUICallback('moveItemBetween', function(data, cb)
-    lib.callback('ax_inventory:server:moveItemBetween', false, function(result)
-        cb(result or { ok = false, error = 'no response' })
-    end, data)
+RegisterNUICallback('moveSecondaryItem', function(data, cb)
+    lib.callback('ax_inventory:server:moveSecondaryItem', false, function(result)
+        cb(result or { ok = false, error = 'no response from server' })
+    end, data.fromSlot, data.toSlot, data.amount, data.secondaryType, data.secondaryKey)
 end)
