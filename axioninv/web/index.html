@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ax Inventory</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div id="app" class="hidden">
+        <div class="inventory-wrapper dual-inventory">
+            <div class="inventory-panel">
+                <div class="inventory-header">
+                    <div>
+                        <h1>Inventory</h1>
+                        <p id="playerWeightText">0 / 0</p>
+                    </div>
+                    <button id="closeBtn">Close</button>
+                </div>
+                <div class="inventory-body">
+                    <div id="playerSlotGrid" class="slot-grid"></div>
+                </div>
+            </div>
+
+            <div class="inventory-panel">
+                <div class="inventory-header">
+                    <div>
+                        <h1 id="secondaryTitle">Container</h1>
+                        <p id="secondaryWeightText">0 / 0</p>
+                    </div>
+                </div>
+
+                <div class="inventory-body">
+                    <div id="secondarySlotGrid" class="slot-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="contextMenu" class="context-menu hidden">
+            <button data-action="use">Use</button>
+            <button data-action="drop">Drop</button>
+            <button data-action="splitOne">Split One</button>
+            <button data-action="splitCustom">Split Custom Amount</button>
+        </div>
+
+        <div id="splitPrompt" class="split-prompt hidden">
+            <div class="split-prompt-box">
+                <h3>Split Amount</h3>
+                <input id="splitAmountInput" type="number" min="1" placeholder="Enter amount" />
+                <div class="split-prompt-actions">
+                    <button id="splitConfirmBtn">Confirm</button>
+                    <button id="splitCancelBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

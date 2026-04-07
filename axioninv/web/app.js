@@ -1,0 +1,506 @@
+const app = document.getElementById('app');
+const playerSlotGrid = document.getElementById('playerSlotGrid');
+const secondarySlotGrid = document.getElementById('secondarySlotGrid');
+const playerWeightText = document.getElementById('playerWeightText');
+const secondaryWeightText = document.getElementById('secondaryWeightText');
+const secondaryTitle = document.getElementById('secondaryTitle');
+const closeBtn = document.getElementById('closeBtn');
+
+const contextMenu = document.getElementById('contextMenu');
+const splitPrompt = document.getElementById('splitPrompt');
+const splitAmountInput = document.getElementById('splitAmountInput');
+const splitConfirmBtn = document.getElementById('splitConfirmBtn');
+const splitCancelBtn = document.getElementById('splitCancelBtn');
+
+let playerInventory = null;
+let secondaryInventory = null;
+let secondaryType = null;
+let secondaryKey = null;
+let itemDefs = {};
+
+let dragging = false;
+let draggedSlot = null;
+let dragGhost = null;
+let hoverSlot = null;
+let dragAmount = null;
+let dragMode = 'full';
+let draggedPanel = null;
+
+let rightMouseDown = false;
+let rightMouseDownSlot = null;
+let rightMouseStartX = 0;
+let rightMouseStartY = 0;
+let rightClickMoved = false;
+
+let contextMenuSlot = null;
+
+function getInventoryByPanel(panel) {
+    if (panel === 'player') return playerInventory;
+    if (panel === 'secondary') return secondaryInventory;
+    return null;
+}
+
+function getItemAt(panel, slot) {
+    const inv = getInventoryByPanel(panel);
+    return inv?.items?.[String(slot)] || null;
+}
+
+function getResourceName() {
+    return window.GetParentResourceName ? window.GetParentResourceName() : 'ax_inventory';
+}
+
+async function nui(action, data = {}) {
+    const res = await fetch(`https://${getResourceName()}/${action}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json; charset=UTF-8'
+        },
+        body: JSON.stringify(data)
+    });
+
+    return await res.json();
+}
+
+function getItemAtSlot(slot) {
+    return inventory?.items?.[String(slot)] || null;
+}
+
+function hideContextMenu() {
+    contextMenu.classList.add('hidden');
+    contextMenuSlot = null;
+}
+
+function showContextMenu(slot, x, y) {
+    contextMenuSlot = slot;
+    contextMenu.style.left = `${x}px`;
+    contextMenu.style.top = `${y}px`;
+    contextMenu.classList.remove('hidden');
+}
+
+function showSplitPrompt() {
+    splitAmountInput.value = '';
+    splitPrompt.classList.remove('hidden');
+    setTimeout(() => splitAmountInput.focus(), 0);
+}
+
+function hideSplitPrompt() {
+    splitPrompt.classList.add('hidden');
+}
+
+function createDragGhost(item, x, y) {
+    removeDragGhost();
+
+    const def = itemDefs[item.name] || {};
+    const modeLabel = dragMode === 'split' ? 'Split' : 'Move';
+
+    dragGhost = document.createElement('div');
+    dragGhost.className = 'drag-ghost';
+    dragGhost.innerHTML = `
+        <div class="drag-ghost-name">${def.label || item.name}</div>
+        <div class="drag-ghost-count">x${item.amount}</div>
+        <div class="drag-ghost-mode">${modeLabel}</div>
+    `;
+
+    document.body.appendChild(dragGhost);
+    updateDragGhostPosition(x, y);
+}
+
+function updateDragGhostPosition(x, y) {
+    if (!dragGhost) return;
+    dragGhost.style.left = `${x + 14}px`;
+    dragGhost.style.top = `${y + 14}px`;
+}
+
+function removeDragGhost() {
+    if (dragGhost) {
+        dragGhost.remove();
+        dragGhost = null;
+    }
+}
+
+async function refreshInventory() {
+    const result = await nui('getInventory');
+    if (result?.ok && result.inventory) {
+        inventory = result.inventory;
+        render();
+    }
+}
+
+function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
+    gridEl.innerHTML = '';
+
+    if (!inventory) {
+        weightEl.textContent = '0 / 0';
+        return;
+    }
+
+    weightEl.textContent = `${inventory.currentWeight} / ${inventory.maxWeight}`;
+
+    for (let i = 1; i <= inventory.slots; i++) {
+        const slotEl = document.createElement('div');
+        slotEl.className = 'slot';
+        slotEl.dataset.slot = String(i);
+        slotEl.dataset.panel = panelName;
+        slotEl.draggable = false;
+
+        if (hoverSlot === i && draggedPanel !== null && slotEl.dataset.panel === hoverPanel) {
+            slotEl.classList.add('drag-over');
+        }
+
+        if (draggedSlot === i && draggedPanel === panelName) {
+            slotEl.classList.add('dragging');
+        }
+
+        const item = getItemAt(panelName, i);
+
+        const number = document.createElement('div');
+        number.className = 'slot-number';
+        number.textContent = i;
+        slotEl.appendChild(number);
+
+        if (item) {
+            const def = itemDefs[item.name] || {};
+            slotEl.classList.add('has-item');
+
+            if (def.image) {
+                const icon = document.createElement('img');
+                icon.className = 'slot-icon';
+                icon.src = `images/${def.image}`;
+                icon.alt = def.label || item.name;
+                icon.draggable = false;
+                icon.addEventListener('dragstart', (e) => e.preventDefault());
+                slotEl.appendChild(icon);
+            }
+
+            const name = document.createElement('div');
+            name.className = 'slot-name';
+            name.textContent = def.label || item.name;
+            slotEl.appendChild(name);
+
+            const count = document.createElement('div');
+            count.className = 'slot-count';
+            count.textContent = `x${item.amount}`;
+            slotEl.appendChild(count);
+
+            slotEl.addEventListener('mousedown', (event) => {
+                hideContextMenu();
+
+                if (event.button === 0) {
+                    dragging = true;
+                    draggedPanel = panelName;
+                    draggedSlot = i;
+                    hoverSlot = null;
+                    hoverPanel = null;
+                    dragMode = 'full';
+                    dragAmount = Number(item.amount) || 1;
+
+                    createDragGhost({
+                        ...item,
+                        amount: dragAmount
+                    }, event.clientX, event.clientY);
+
+                    render();
+                    return;
+                }
+
+                if (event.button === 2 && panelName === 'player') {
+                    rightMouseDown = true;
+                    rightMouseDownSlot = i;
+                    rightMouseDownPanel = panelName;
+                    rightMouseStartX = event.clientX;
+                    rightMouseStartY = event.clientY;
+                    rightClickMoved = false;
+                }
+            });
+        } else {
+            const empty = document.createElement('div');
+            empty.className = 'slot-empty';
+            empty.textContent = 'Empty';
+            slotEl.appendChild(empty);
+
+            slotEl.addEventListener('mousedown', () => {
+                hideContextMenu();
+            });
+        }
+
+        gridEl.appendChild(slotEl);
+    }
+}
+
+let hoverPanel = null;
+let rightMouseDownPanel = null;
+
+function render() {
+    renderInventoryPanel('player', playerSlotGrid, playerInventory, playerWeightText);
+    renderInventoryPanel('secondary', secondarySlotGrid, secondaryInventory, secondaryWeightText);
+
+    if (!secondaryInventory) {
+        secondaryTitle.textContent = 'No Container Open';
+    } else {
+        secondaryTitle.textContent = secondaryType === 'drop' ? 'Ground Drop' : 'Container';
+    }
+}
+
+async function handleDrop(targetPanel, targetSlot) {
+    if (!dragging || !draggedSlot || !draggedPanel) return;
+
+    const fromPanel = draggedPanel;
+    const fromSlot = draggedSlot;
+    const toPanel = targetPanel;
+    const toSlot = targetSlot;
+    const amount = dragAmount;
+
+    dragging = false;
+    draggedPanel = null;
+    draggedSlot = null;
+    hoverSlot = null;
+    hoverPanel = null;
+    dragAmount = null;
+    dragMode = 'full';
+    removeDragGhost();
+
+    if (!toPanel || !toSlot || (fromPanel === toPanel && fromSlot === toSlot) || !amount || amount < 1) {
+        render();
+        return;
+    }
+
+    const result = await nui('moveItemBetween', {
+        fromPanel,
+        fromSlot,
+        toPanel,
+        toSlot,
+        amount,
+        secondaryType,
+        secondaryKey
+    });
+
+    if (!result || !result.ok) {
+        console.log('move failed:', result?.error || 'unknown error');
+        render();
+        return;
+    }
+
+    playerInventory = result.playerInventory;
+    secondaryInventory = result.secondaryInventory;
+    render();
+}
+
+window.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+});
+
+document.addEventListener('mousemove', (event) => {
+    if (rightMouseDown && !dragging) {
+        const dx = Math.abs(event.clientX - rightMouseStartX);
+        const dy = Math.abs(event.clientY - rightMouseStartY);
+
+        if (dx > 6 || dy > 6) {
+            const item = getItemAt(rightMouseDownPanel, rightMouseDownSlot);
+
+            if (item) {
+                const itemAmount = Number(item.amount) || 1;
+                const half = Math.floor(itemAmount / 2);
+
+                if (half >= 1) {
+                    dragging = true;
+                    draggedPanel = rightMouseDownPanel;
+                    draggedSlot = rightMouseDownSlot;
+                    hoverSlot = null;
+                    hoverPanel = null;
+                    dragMode = 'split';
+                    dragAmount = half;
+                    rightClickMoved = true;
+
+                    createDragGhost({
+                        ...item,
+                        amount: dragAmount
+                    }, event.clientX, event.clientY);
+                }
+            }
+        }
+    }
+
+    if (!dragging) return;
+
+    updateDragGhostPosition(event.clientX, event.clientY);
+
+    const slotEl = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.slot');
+    if (slotEl) {
+        hoverSlot = Number(slotEl.dataset.slot);
+        hoverPanel = slotEl.dataset.panel;
+    } else {
+        hoverSlot = null;
+        hoverPanel = null;
+    }
+
+    render();
+});
+
+document.addEventListener('mouseup', async (event) => {
+    if (event.button === 2 && rightMouseDown) {
+        const slot = rightMouseDownSlot;
+        const panel = rightMouseDownPanel;
+        const item = getItemAt(panel, slot);
+
+        if (!rightClickMoved && item && panel === 'player') {
+            showContextMenu(slot, event.clientX, event.clientY);
+        }
+
+        rightMouseDown = false;
+        rightMouseDownSlot = null;
+        rightMouseDownPanel = null;
+        rightClickMoved = false;
+    }
+
+    if (!dragging) return;
+
+    const slotEl = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.slot');
+    const targetSlot = slotEl ? Number(slotEl.dataset.slot) : null;
+    const targetPanel = slotEl ? slotEl.dataset.panel : null;
+
+    await handleDrop(targetPanel, targetSlot);
+});
+
+document.addEventListener('click', (event) => {
+    if (!contextMenu.contains(event.target)) {
+        hideContextMenu();
+    }
+});
+
+contextMenu.addEventListener('click', async (event) => {
+    const action = event.target.dataset.action;
+    if (!action || !contextMenuSlot) return;
+
+    const slot = contextMenuSlot;
+    const item = getItemAtSlot(slot);
+    hideContextMenu();
+
+    if (!item) return;
+
+    if (action === 'use') {
+        const result = await nui('useItem', { slot });
+        if (result?.ok && result.inventory) {
+            inventory = result.inventory;
+            render();
+        }
+        return;
+    }
+
+    if (action === 'drop') {
+        const result = await nui('dropItem', { slot, amount: item.amount });
+        if (result?.ok && result.inventory) {
+            inventory = result.inventory;
+            render();
+        }
+        return;
+    }
+
+    if (action === 'splitOne') {
+        const result = await nui('splitOne', { slot });
+        if (result?.ok && result.inventory) {
+            inventory = result.inventory;
+            render();
+        }
+        return;
+    }
+
+    if (action === 'splitCustom') {
+        contextMenuSlot = slot;
+        showSplitPrompt();
+    }
+});
+
+splitConfirmBtn.addEventListener('click', async () => {
+    const slot = contextMenuSlot;
+    const item = getItemAtSlot(slot);
+    const amount = Number(splitAmountInput.value);
+
+    hideSplitPrompt();
+
+    if (!slot || !item || !amount || amount < 1 || amount >= item.amount) {
+        return;
+    }
+
+    const result = await nui('splitCustom', { slot, amount });
+    if (result?.ok && result.inventory) {
+        inventory = result.inventory;
+        render();
+    }
+});
+
+splitCancelBtn.addEventListener('click', () => {
+    hideSplitPrompt();
+});
+
+closeBtn.addEventListener('click', async () => {
+    dragging = false;
+    draggedSlot = null;
+    hoverSlot = null;
+    dragAmount = null;
+    dragMode = 'full';
+    rightMouseDown = false;
+    rightMouseDownSlot = null;
+    rightClickMoved = false;
+    hideContextMenu();
+    hideSplitPrompt();
+    removeDragGhost();
+    await nui('close');
+});
+
+window.addEventListener('keydown', async (event) => {
+    if (event.key === 'Escape') {
+        dragging = false;
+        draggedSlot = null;
+        hoverSlot = null;
+        dragAmount = null;
+        dragMode = 'full';
+        rightMouseDown = false;
+        rightMouseDownSlot = null;
+        rightClickMoved = false;
+        hideContextMenu();
+        hideSplitPrompt();
+        removeDragGhost();
+        await nui('close');
+    }
+});
+
+window.addEventListener('message', (event) => {
+    const data = event.data;
+
+    if (data.action === 'open') {
+        playerInventory = data.inventory;
+        secondaryInventory = null;
+        secondaryType = null;
+        secondaryKey = null;
+        itemDefs = data.items || {};
+        app.classList.remove('hidden');
+        render();
+        return;
+    }
+
+    if (data.action === 'close') {
+        playerInventory = null;
+        secondaryInventory = null;
+        secondaryType = null;
+        secondaryKey = null;
+        app.classList.add('hidden');
+        return;
+    }
+
+    if (data.action === 'setInventory') {
+        inventory = data.inventory;
+        itemDefs = data.items || {};
+        render();
+    }
+
+    if (data.action === 'openDropInventory') {
+        playerInventory = data.playerInventory;
+        secondaryInventory = data.inventory;
+        secondaryType = 'drop';
+        secondaryKey = data.key;
+        itemDefs = data.items || {};
+        app.classList.remove('hidden');
+        render();
+        return;
+    }
+});
