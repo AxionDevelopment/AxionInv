@@ -1,5 +1,5 @@
-RegisterCommand('purgedrops', function()
-    PurgeExpiredDrops()
+RegisterCommand('purgedrops', function(args, raw)
+    PurgeExpiredDrops(0) -- purge all drops immediately
 end, true)
 
 RegisterNetEvent('ax_inventory:server:testAdd', function(item)

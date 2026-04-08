@@ -13,9 +13,7 @@ files {
     'axioninv/web/index.html',
     'axioninv/web/style.css',
     'axioninv/web/app.js',
-    'axioninv/web/images/*.png',
-    'axioninv/web/images/*.webp',
-    'axioninv/web/images/*.jpg'
+    'axioninv/web/images/*.webp'
 }
 
 shared_scripts {

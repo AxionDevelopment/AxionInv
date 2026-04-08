@@ -506,14 +506,12 @@ end
 CreateThread(function()
     while true do
         Wait(60 * 1000) -- every 60 seconds
-        PurgeExpiredDrops()
+        PurgeExpiredDrops(20) -- purge drops older than 20 minutes
     end
 end)
 
-local DROP_LIFETIME_SECONDS = 20 * 60 -- 20 minutes
-
-function PurgeExpiredDrops()
-    local expired = DB.fetchExpiredDrops()
+function PurgeExpiredDrops(age)
+    local expired = DB.fetchExpiredDrops(age)
     if not expired or #expired == 0 then
         print('[ax_inventory] No expired drops found')
         return

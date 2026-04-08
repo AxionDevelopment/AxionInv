@@ -39,6 +39,10 @@ let rightClickMoved = false;
 
 let contextMenuSlot = null;
 
+let mouseX = 0;
+let mouseY = 0;
+let dragFrameRequested = false;
+
 function resetDragState() {
     dragging = false;
     draggedSlot = null;
@@ -52,6 +56,7 @@ function resetDragState() {
     rightMouseDownPanel = null;
     rightClickMoved = false;
     removeDragGhost();
+    clearHoverVisuals();
 }
 
 function getInventoryByPanel(panel) {
@@ -152,6 +157,47 @@ function removeDragGhost() {
     }
 }
 
+function clearHoverVisuals() {
+    document.querySelectorAll('.slot.drag-over').forEach((el) => {
+        el.classList.remove('drag-over');
+    });
+
+    document.querySelectorAll('.slot.dragging').forEach((el) => {
+        el.classList.remove('dragging');
+    });
+}
+
+function updateHoverVisuals() {
+    clearHoverVisuals();
+
+    if (draggedPanel && draggedSlot) {
+        const draggedEl = document.querySelector(`.slot[data-panel="${draggedPanel}"][data-slot="${draggedSlot}"]`);
+        if (draggedEl) {
+            draggedEl.classList.add('dragging');
+        }
+    }
+
+    if (hoverPanel && hoverSlot) {
+        const hoverEl = document.querySelector(`.slot[data-panel="${hoverPanel}"][data-slot="${hoverSlot}"]`);
+        if (hoverEl) {
+            hoverEl.classList.add('drag-over');
+        }
+    }
+}
+
+function requestDragFrame() {
+    if (dragFrameRequested) return;
+
+    dragFrameRequested = true;
+    requestAnimationFrame(() => {
+        dragFrameRequested = false;
+
+        if (!dragging) return;
+
+        updateDragGhostPosition(mouseX, mouseY);
+    });
+}
+
 function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
     gridEl.innerHTML = '';
 
@@ -168,14 +214,6 @@ function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
         slotEl.dataset.slot = String(i);
         slotEl.dataset.panel = panelName;
         slotEl.draggable = false;
-
-        if (hoverSlot === i && draggedPanel !== null && slotEl.dataset.panel === hoverPanel) {
-            slotEl.classList.add('drag-over');
-        }
-
-        if (draggedSlot === i && draggedPanel === panelName) {
-            slotEl.classList.add('dragging');
-        }
 
         const item = getItemAt(panelName, i);
 
@@ -226,7 +264,7 @@ function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
                         event.clientY
                     );
 
-                    render();
+                    updateHoverVisuals();
                     return;
                 }
 
@@ -263,6 +301,10 @@ function render() {
     } else {
         secondaryTitle.textContent = secondaryType === 'drop' ? 'Ground Drop' : 'Container';
     }
+
+    if (dragging) {
+        updateHoverVisuals();
+    }
 }
 
 async function handleDrop(targetPanel, targetSlot) {
@@ -274,14 +316,7 @@ async function handleDrop(targetPanel, targetSlot) {
     const toSlot = targetSlot;
     const amount = dragAmount;
 
-    dragging = false;
-    draggedPanel = null;
-    draggedSlot = null;
-    hoverSlot = null;
-    hoverPanel = null;
-    dragAmount = null;
-    dragMode = 'full';
-    removeDragGhost();
+    resetDragState();
 
     if (!toPanel || !toSlot || (fromPanel === toPanel && fromSlot === toSlot) || !amount || amount < 1) {
         render();
@@ -290,7 +325,6 @@ async function handleDrop(targetPanel, targetSlot) {
 
     let result = null;
 
-    // same inventory panel
     if (fromPanel === toPanel) {
         if (fromPanel === 'player') {
             result = await nui('moveItem', {
@@ -331,7 +365,6 @@ async function handleDrop(targetPanel, targetSlot) {
         }
     }
 
-    // between inventories
     result = await nui('moveItemBetween', {
         fromPanel,
         fromSlot,
@@ -366,6 +399,9 @@ document.addEventListener('drop', (event) => {
 });
 
 document.addEventListener('mousemove', (event) => {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+
     if (rightMouseDown && !dragging) {
         const dx = Math.abs(event.clientX - rightMouseStartX);
         const dy = Math.abs(event.clientY - rightMouseStartY);
@@ -392,6 +428,8 @@ document.addEventListener('mousemove', (event) => {
                         event.clientX,
                         event.clientY
                     );
+
+                    updateHoverVisuals();
                 }
             }
         }
@@ -399,18 +437,23 @@ document.addEventListener('mousemove', (event) => {
 
     if (!dragging) return;
 
-    updateDragGhostPosition(event.clientX, event.clientY);
+    requestDragFrame();
 
     const slotEl = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.slot');
+
+    let newHoverSlot = null;
+    let newHoverPanel = null;
+
     if (slotEl) {
-        hoverSlot = Number(slotEl.dataset.slot);
-        hoverPanel = slotEl.dataset.panel;
-    } else {
-        hoverSlot = null;
-        hoverPanel = null;
+        newHoverSlot = Number(slotEl.dataset.slot);
+        newHoverPanel = slotEl.dataset.panel;
     }
 
-    render();
+    if (newHoverSlot !== hoverSlot || newHoverPanel !== hoverPanel) {
+        hoverSlot = newHoverSlot;
+        hoverPanel = newHoverPanel;
+        updateHoverVisuals();
+    }
 });
 
 document.addEventListener('mouseup', async (event) => {
@@ -521,16 +564,7 @@ closeBtn.addEventListener('click', async (event) => {
 });
 
 window.addEventListener('keydown', async (event) => {
-    if (event.key === 'Escape') {
-        resetDragState();
-        hideContextMenu();
-        hideSplitPrompt();
-        await nui('close');
-    }
-});
-
-window.addEventListener('keydown', async (event) => {
-    if (event.key === 'Tab') {
+    if (event.key === 'Escape' || event.key === 'Tab') {
         resetDragState();
         hideContextMenu();
         hideSplitPrompt();

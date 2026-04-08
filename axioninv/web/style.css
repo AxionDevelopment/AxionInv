@@ -79,6 +79,7 @@ body {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
     gap: 10px;
+    margin: 4px;
 }
 
 .slot {
@@ -360,7 +361,7 @@ body {
     background: #171821;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
-    padding: 20px;
+    padding: 15px;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
@@ -373,3 +374,26 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+
+/* ===== Scrollbar CSS ===== */
+  /* Firefox */
+  * {
+    scrollbar-width: auto;
+    scrollbar-color: #d1d1d1 #2d2f3e;
+  }
+
+  /* Chrome, Edge, and Safari */
+  *::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #2d2f3e;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: #d1d1d1;
+    border-radius: 12px;
+    border: 0px none #ffffff;
+  }

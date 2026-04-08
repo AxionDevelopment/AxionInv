@@ -85,14 +85,14 @@ function DB.fetchDrops()
     ]], {})
 end
 
-function DB.fetchExpiredDrops()
+function DB.fetchExpiredDrops(ageMinutes)
     return MySQL.query.await([[
         SELECT owner_id, created_at
         FROM inventories
         WHERE inventory_type = "drop"
-        AND created_at < DATE_SUB(NOW(), INTERVAL 20 MINUTE)
+        AND created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
         ORDER BY created_at ASC;]],
-    {})
+    { ageMinutes })
 end
 
 function DB.deleteDropInventory(dropKey)

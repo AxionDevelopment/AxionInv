@@ -1,5 +1,6 @@
 local inventoryOpen = false
 WorldDrops = WorldDrops or {}
+DropObjects = DropObjects or {}
 
 local function forceCloseInventory()
     inventoryOpen = false
@@ -8,6 +9,56 @@ local function forceCloseInventory()
     SendNUIMessage({
         action = 'close'
     })
+end
+
+function DrawText3D(x, y, z, text, alpha)
+    local onScreen, _x, _y = World3dToScreen2d(x, y, z)
+    if not onScreen then return end
+
+    alpha = alpha or 215
+
+    SetTextScale(0.32, 0.32)
+    SetTextFont(4)
+    SetTextProportional(1)
+    SetTextColour(255, 255, 255, alpha)
+    SetTextCentre(true)
+
+    BeginTextCommandDisplayText("STRING")
+    AddTextComponentSubstringPlayerName(text)
+    EndTextCommandDisplayText(_x, _y)
+
+    local factor = #text / 370
+    DrawRect(_x, _y + 0.0125, 0.015 + factor, 0.03, 0, 0, 0, math.floor(alpha * 0.55))
+end
+
+function SpawnDropProp(dropKey, coords)
+    local model = `prop_security_case_01`
+
+    RequestModel(model)
+    while not HasModelLoaded(model) do
+        Wait(0)
+    end
+
+    local foundGround, groundZ = GetGroundZFor_3dCoord(coords.x, coords.y, coords.z + 2.0, false)
+
+    local spawnZ = coords.z
+    if foundGround then
+        spawnZ = groundZ
+    end
+
+    local obj = CreateObject(
+        model,
+        coords.x, coords.y, spawnZ + 0.02,
+        false, false, false
+    )
+
+    SetEntityHeading(obj, math.random(0, 360) + 0.0)
+    PlaceObjectOnGroundProperly(obj)
+    SetEntityCollision(obj, false, false)
+    FreezeEntityPosition(obj, true)
+    SetEntityAsMissionEntity(obj, true, true)
+
+    return obj
 end
 
 local function openInventory()
@@ -117,17 +168,67 @@ RegisterNetEvent('ax_inventory:client:bandageUsed', function()
     SetEntityHealth(playerPed, newHealth)
 end)
 
+RegisterNetEvent('ax_inventory:client:energyDrinkConsumed', function()
+    local timer = 0
+
+    while timer < 180000 do
+        RestorePlayerStamina(PlayerId(), 1.0)
+        Wait(1000)
+        timer = timer + 1000
+    end
+end)
+
+RegisterNetEvent('ax_inventory:client:cocaineConsumed', function()
+    local timer = 0
+
+    SetRunSprintMultiplierForPlayer(PlayerId(), 1.25)
+    while timer < 180000 do
+        RestorePlayerStamina(PlayerId(), 1.0)
+        Wait(1000)
+        timer = timer + 1000
+    end
+    
+    SetRunSprintMultiplierForPlayer(PlayerId(), 1.00)
+end)
+
+RegisterNetEvent('ax_inventory:client:pcpConsumed', function()
+    local timer = 0
+
+    SetPedCanRagdoll(PlayerId(), false)
+    SetPlayerInvincible(PlayerId(), true)
+
+    while timer < 60000 do
+        Wait(1000)
+        timer = timer + 1000
+    end
+
+    SetPedCanRagdoll(PlayerId(), true)
+    SetPlayerInvincible(PlayerId(), false)
+end)
+
 RegisterNetEvent('ax_inventory:client:syncDrops', function(drops)
     WorldDrops = drops or {}
+    DropObjects = {}
+    for _, drop in pairs(WorldDrops) do
+        DropObjects[drop.key] = SpawnDropProp(drop.key, drop.coords)
+    end
 end)
 
 RegisterNetEvent('ax_inventory:client:addDrop', function(drop)
     if not drop or not drop.key then return end
     WorldDrops[drop.key] = drop
+
+    DropObjects[drop.key] = SpawnDropProp(drop.key, drop.coords)
 end)
 
 RegisterNetEvent('ax_inventory:client:removeDrop', function(dropKey)
     WorldDrops[dropKey] = nil
+
+    local obj = DropObjects[dropKey]
+    if obj and DoesEntityExist(obj) then
+        DeleteEntity(obj)
+    end
+    DropObjects[dropKey] = nil
 end)
 
 CreateThread(function()
@@ -148,7 +249,7 @@ CreateThread(function()
 
                 DrawMarker(
                     2,
-                    dropCoords.x, dropCoords.y, dropCoords.z + 0.15,
+                    dropCoords.x, dropCoords.y, dropCoords.z + 0.55,
                     0.0, 0.0, 0.0,
                     0.0, 0.0, 0.0,
                     0.18, 0.18, 0.18,
@@ -157,9 +258,17 @@ CreateThread(function()
                 )
 
                 if dist < 1.5 then
-                    SetTextComponentFormat('STRING')
-                    AddTextComponentString('Press ~INPUT_CONTEXT~ to open drop')
-                    DisplayHelpTextFromStringLabel(0, false, true, -1)
+                    local alpha = math.floor((1.5 - dist) / 1.5 * 1000)
+                    if alpha < 0 then alpha = 0 end
+                    if alpha > 255 then alpha = 255 end
+
+                    DrawText3D(
+                        dropCoords.x,
+                        dropCoords.y,
+                        dropCoords.z + 0.3,
+                        '[E] Open Drop',
+                        alpha
+                    )
 
                     if IsControlJustPressed(0, 38) then
                         inventoryOpen = true
