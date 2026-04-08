@@ -27,15 +27,5 @@ Items = {
         closeOnUse = true,
         image = 'cocaine.webp',
         description = 'Used to increase stamina and speed for 3 minutes.'
-    },
-
-    pcp = {
-        label = 'PCP',
-        weight = 500,
-        stack = 5,
-        usable = true,
-        closeOnUse = true,
-        image = 'pcp.webp',
-        description = 'Used to have no ragdoll and super heavy armor for 3 minutes.'
     }
 }

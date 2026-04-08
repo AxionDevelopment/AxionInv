@@ -162,6 +162,13 @@ end)
 RegisterNetEvent('ax_inventory:client:bandageUsed', function()
     local playerPed = PlayerPedId()
 
+    forceCloseInventory()
+    TaskStartScenarioInPlace(PlayerPedId(), 'CODE_HUMAN_MEDIC_TEND_TO_DEAD', 0, true)
+    Wait(3000)
+
+    -- https://wiki.rage.mp/wiki/Screen_FX
+    ClearPedTasksImmediately(PlayerPedId())
+
     local currentHealth = GetEntityHealth(playerPed)
 
     local newHealth = currentHealth + 20
@@ -171,39 +178,32 @@ end)
 RegisterNetEvent('ax_inventory:client:energyDrinkConsumed', function()
     local timer = 0
 
-    while timer < 180000 do
-        RestorePlayerStamina(PlayerId(), 1.0)
-        Wait(1000)
-        timer = timer + 1000
-    end
-end)
+    forceCloseInventory()
+    -- https://pastebin.com/6mrYTdQv
+    TaskStartScenarioInPlace(PlayerPedId(), 'WORLD_HUMAN_DRINKING', 0, true)
+    Wait(3000)
 
-RegisterNetEvent('ax_inventory:client:cocaineConsumed', function()
-    local timer = 0
+    -- https://wiki.rage.mp/wiki/Screen_FX
+    StartScreenEffect('PPPurple', 180000, false)
+    ClearPedTasksImmediately(PlayerPedId())
 
-    SetRunSprintMultiplierForPlayer(PlayerId(), 1.25)
     while timer < 180000 do
         RestorePlayerStamina(PlayerId(), 1.0)
         Wait(1000)
         timer = timer + 1000
     end
     
-    SetRunSprintMultiplierForPlayer(PlayerId(), 1.00)
+    SetPedMotionBlur(PlayerPedId(), false)
 end)
 
-RegisterNetEvent('ax_inventory:client:pcpConsumed', function()
-    local timer = 0
-
-    SetPedCanRagdoll(PlayerId(), false)
-    SetPlayerInvincible(PlayerId(), true)
-
-    while timer < 60000 do
-        Wait(1000)
-        timer = timer + 1000
-    end
-
-    SetPedCanRagdoll(PlayerId(), true)
-    SetPlayerInvincible(PlayerId(), false)
+RegisterNetEvent('ax_inventory:client:cocaineConsumed', function()
+    SetRunSprintMultiplierForPlayer(PlayerId(), 1.25)
+    
+    forceCloseInventory()
+    StartScreenEffect('PPPurple', 180000, false)
+    Wait(180000)
+    
+    SetRunSprintMultiplierForPlayer(PlayerId(), 1.00)
 end)
 
 RegisterNetEvent('ax_inventory:client:syncDrops', function(drops)
