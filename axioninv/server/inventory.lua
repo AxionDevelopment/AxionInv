@@ -354,6 +354,60 @@ function RemoveWorldDrop(dropKey)
     TriggerClientEvent('ax_inventory:client:removeDrop', -1, dropKey)
 end
 
+local DROP_MERGE_RADIUS = 1.5
+
+function FindNearbyDrop(coords, radius)
+    radius = radius or DROP_MERGE_RADIUS
+
+    for dropKey, drop in pairs(Drops) do
+        local dropCoords = drop.coords
+        local dx = coords.x - dropCoords.x
+        local dy = coords.y - dropCoords.y
+        local dz = coords.z - dropCoords.z
+        local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        if dist <= radius then
+            return dropKey, drop
+        end
+    end
+
+    return nil, nil
+end
+
+function GetOrCreateWorldDrop(coords)
+    local nearbyDropKey = FindNearbyDrop(coords)
+
+    if nearbyDropKey then
+        DB.touchDrop(nearbyDropKey)
+        local inv = GetInventory('drop', nearbyDropKey, 'drop')
+        if inv then
+            return nearbyDropKey, inv, true
+        end
+    end
+
+    local dropKey = ('drop:%s'):format(math.random(100000, 999999) .. os.time())
+
+    DB.createDrop(dropKey, coords)
+
+    Drops[dropKey] = {
+        key = dropKey,
+        coords = vector3(coords.x, coords.y, coords.z)
+    }
+
+    local inv = GetInventory('drop', dropKey, 'drop')
+
+    TriggerClientEvent('ax_inventory:client:addDrop', -1, {
+        key = dropKey,
+        coords = {
+            x = coords.x,
+            y = coords.y,
+            z = coords.z
+        }
+    })
+
+    return dropKey, inv, false
+end
+
 function IsInventoryEmpty(inv)
     for _, item in pairs(inv.items) do
         if item then
@@ -375,6 +429,7 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
         return false, 'missing item definition'
     end
 
+    local maxStack = tonumber(sourceDef.stack) or 1
     amount = tonumber(amount) or sourceItem.amount
 
     if amount < 1 or amount > sourceItem.amount then
@@ -383,9 +438,8 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
 
     local targetItem = toInv.items[toSlot]
 
+    -- empty target slot
     if not targetItem then
-        local maxStack = getMaxStack(sourceItem.name)
-
         if amount > maxStack then
             return false, 'amount exceeds max stack size'
         end
@@ -410,8 +464,7 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
 
     local sameMeta = json.encode(targetItem.metadata or {}) == json.encode(sourceItem.metadata or {})
 
-    local maxStack = getMaxStack(sourceItem.name)
-
+    -- merge into existing stack
     if targetItem.name == sourceItem.name and maxStack > 1 and sameMeta then
         local spaceLeft = maxStack - targetItem.amount
         if spaceLeft <= 0 then
@@ -419,19 +472,25 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
         end
 
         local toMove = math.min(spaceLeft, amount)
+
+        if toMove <= 0 then
+            return false, 'nothing to move'
+        end
+
         targetItem.amount = targetItem.amount + toMove
 
         if toMove == sourceItem.amount then
-            inv.items[fromSlot] = nil
+            fromInv.items[fromSlot] = nil
         else
             sourceItem.amount = sourceItem.amount - toMove
         end
 
-        SaveSlot(inv, fromSlot)
-        SaveSlot(inv, toSlot)
+        SaveSlot(fromInv, fromSlot)
+        SaveSlot(toInv, toSlot)
         return true
     end
 
+    -- only allow full swap on occupied non-stackable/different item
     if amount ~= sourceItem.amount then
         return false, 'cannot split onto occupied slot unless stacking'
     end
@@ -442,6 +501,39 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
     SaveSlot(toInv, toSlot)
 
     return true
+end
+
+CreateThread(function()
+    while true do
+        Wait(60 * 1000) -- every 60 seconds
+        PurgeExpiredDrops()
+    end
+end)
+
+local DROP_LIFETIME_SECONDS = 20 * 60 -- 20 minutes
+
+function PurgeExpiredDrops()
+    local expired = DB.fetchExpiredDrops()
+    if not expired or #expired == 0 then
+        print('[ax_inventory] No expired drops found')
+        return
+    end
+
+    print(('[ax_inventory] Purging %s expired drops'):format(#expired))
+
+    for _, row in ipairs(expired) do
+        local dropKey = row.owner_id
+        print(('[ax_inventory] Purging drop %s'):format(dropKey))
+
+        Drops[dropKey] = nil
+        DB.deleteDrop(dropKey)
+        DB.deleteDropInventory(dropKey)
+
+        local cacheKey = ('drop:%s:drop'):format(dropKey)
+        Inventories[cacheKey] = nil
+
+        TriggerClientEvent('ax_inventory:client:removeDrop', -1, dropKey)
+    end
 end
 
 exports('GetInventory', GetInventory)

@@ -364,7 +364,8 @@ body {
     max-height: 90vh;
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    min-height: 540px;
+    max-height: 70vh;
 }
 
 @media (max-width: 1100px) {

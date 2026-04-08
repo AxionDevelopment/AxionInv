@@ -84,3 +84,28 @@ function DB.fetchDrops()
         FROM inventory_drops
     ]], {})
 end
+
+function DB.fetchExpiredDrops()
+    return MySQL.query.await([[
+        SELECT owner_id, created_at
+        FROM inventories
+        WHERE inventory_type = "drop"
+        AND created_at < DATE_SUB(NOW(), INTERVAL 20 MINUTE)
+        ORDER BY created_at ASC;]],
+    {})
+end
+
+function DB.deleteDropInventory(dropKey)
+    return MySQL.query.await([[
+        DELETE FROM inventories
+        WHERE owner_type = 'drop' AND owner_id = ? AND inventory_type = 'drop'
+    ]], { dropKey })
+end
+
+function DB.touchDrop(dropKey)
+    return MySQL.query.await([[
+        UPDATE inventory_drops
+        SET created_at = NOW()
+        WHERE drop_key = ?
+    ]], { dropKey })
+end

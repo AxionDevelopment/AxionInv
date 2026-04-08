@@ -26,6 +26,6 @@ InventoryDefaults = {
     drop = {
         label = 'Ground Drop',
         slots = 20,
-        maxWeight = 30000
+        maxWeight = 100000
     }
 }

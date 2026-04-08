@@ -1,3 +1,7 @@
+RegisterCommand('purgedrops', function()
+    PurgeExpiredDrops()
+end, true)
+
 RegisterNetEvent('ax_inventory:server:testAdd', function(item)
     local src = source
 
@@ -85,16 +89,24 @@ lib.callback.register('ax_inventory:server:dropItem', function(source, slot, amo
     local ped = GetPlayerPed(source)
     local coords = GetEntityCoords(ped)
 
-    local dropKey, dropInv = CreateWorldDrop({
+    local dropCoords = {
         x = coords.x,
         y = coords.y,
         z = coords.z - 0.95
-    })
+    }
 
-    local addSuccess, addErr = AddItem(dropInv, item.name, amount, item.metadata)
+    local dropKey, dropInv, merged = GetOrCreateWorldDrop(dropCoords)
+    if not dropInv then
+        return { ok = false, error = 'failed to get drop inventory' }
+    end
+
+    local addSuccess, addResult = AddItem(dropInv, item.name, amount, item.metadata)
     if not addSuccess then
-        RemoveWorldDrop(dropKey)
-        return { ok = false, error = addErr or 'failed to create drop' }
+        if not merged then
+            RemoveWorldDrop(dropKey)
+        end
+
+        return { ok = false, error = addResult or 'failed to add to drop' }
     end
 
     local removeSuccess, removeErr = RemoveItemFromSlot(inv, slot, amount)
