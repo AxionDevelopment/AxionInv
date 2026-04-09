@@ -1,6 +1,7 @@
 local inventoryOpen = false
 WorldDrops = WorldDrops or {}
 DropObjects = DropObjects or {}
+local stashBlips = {}
 
 local function forceCloseInventory()
     inventoryOpen = false
@@ -59,6 +60,82 @@ function SpawnDropProp(dropKey, coords)
     SetEntityAsMissionEntity(obj, true, true)
 
     return obj
+end
+
+local function getStashBlipStyle(status)
+    if not status or not status.exists then
+        return nil
+    end
+
+    -- Unowned buyable stash
+    if status.mode == 'owned' and not status.owned and AxionInv.BlipsOnUnownedStashes then
+        return {
+            sprite = 568,
+            color = 5, -- yellow
+            scale = 0.75,
+            label = ('Unowned %s'):format(status.label or 'Stash')
+        }
+    end
+
+    -- Owned by player
+    if status.mode == 'owned' and status.isOwner then
+        return {
+            sprite = 568,
+            color = 2, -- green
+            scale = 0.85,
+            label = status.label or 'My Stash'
+        }
+    end
+
+    -- Permission stash player can access
+    if status.mode == 'permission' and status.canAccess then
+        return {
+            sprite = 568,
+            color = 3, -- light blue
+            scale = 0.85,
+            label = status.label or 'Restricted Stash'
+        }
+    end
+
+    -- Public stash
+    if status.mode == 'public' then
+        return {
+            sprite = 568,
+            color = 7, -- white
+            scale = 0.8,
+            label = status.label or 'Public Stash'
+        }
+    end
+
+    -- Hidden if not accessible
+    return nil
+end
+
+local function updateStashBlip(stash, status)
+    local existing = stashBlips[stash.key]
+    local style = getStashBlipStyle(status)
+
+    if not style then
+        if existing then
+            RemoveBlip(existing)
+            stashBlips[stash.key] = nil
+        end
+        return
+    end
+
+    if not existing then
+        existing = AddBlipForCoord(stash.coords.x, stash.coords.y, stash.coords.z)
+        stashBlips[stash.key] = existing
+    end
+
+    SetBlipSprite(existing, style.sprite)
+    SetBlipColour(existing, style.color)
+    SetBlipScale(existing, style.scale)
+    SetBlipAsShortRange(existing, true)
+
+    BeginTextCommandSetBlipName('STRING')
+    AddTextComponentString(style.label)
+    EndTextCommandSetBlipName(existing)
 end
 
 local function openInventory()
@@ -311,7 +388,7 @@ CreateThread(function()
         for _, stash in ipairs(StashLocations or {}) do
             local dist = #(coords - stash.coords)
 
-            if dist < 20.0 and not stashStatusBusy[stash.key] then
+            if dist < 200.0 and not stashStatusBusy[stash.key] then
                 stashStatusBusy[stash.key] = true
 
                 CreateThread(function()
@@ -321,6 +398,7 @@ CreateThread(function()
 
                     if ok then
                         stashStatusCache[stash.key] = status
+                        updateStashBlip(stash, status)
                     end
 
                     stashStatusBusy[stash.key] = nil
@@ -328,7 +406,7 @@ CreateThread(function()
             end
         end
 
-        Wait(1000)
+        Wait(2000)
     end
 end)
 
@@ -399,6 +477,11 @@ CreateThread(function()
                             if not status.owned then
                                 TriggerServerEvent('ax_inventory:server:buyStash', stash.key)
                                 stashStatusCache[stash.key] = nil
+
+                                if stashBlips[stash.key] then
+                                    RemoveBlip(stashBlips[stash.key])
+                                    stashBlips[stash.key] = nil
+                                end
                             elseif status.isOwner then
                                 inventoryOpen = true
                                 TriggerServerEvent('ax_inventory:server:openStash', stash.key)

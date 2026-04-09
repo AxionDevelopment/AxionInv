@@ -36,7 +36,7 @@ StashLocations = {
         label = 'Test Buyable Locker',
         coords = vec3(-369.43, -119.5, 38.7),
         slots = 40,
-        maxWeight = 50000,
+        maxWeight = 120000,
         mode = 'owned',
         price = 5000
     },
