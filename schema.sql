@@ -41,3 +41,14 @@ CREATE TABLE IF NOT EXISTS inventory_drops (
     PRIMARY KEY (id),
     UNIQUE KEY uniq_drop_key (drop_key)
 );
+
+CREATE TABLE IF NOT EXISTS owned_stashes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    stash_key VARCHAR(100) NOT NULL UNIQUE,
+    owner_identifier VARCHAR(100) NOT NULL,
+    label VARCHAR(100) DEFAULT NULL,
+    slots INT NOT NULL DEFAULT 40,
+    max_weight INT NOT NULL DEFAULT 50000,
+    tier INT NOT NULL DEFAULT 1,
+    purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

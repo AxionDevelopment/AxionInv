@@ -160,19 +160,17 @@ RegisterNetEvent('ax_inventory:client:forceClose', function()
 end)
 
 RegisterNetEvent('ax_inventory:client:bandageUsed', function()
-    local playerPed = PlayerPedId()
 
     forceCloseInventory()
+    -- https://pastebin.com/6mrYTdQv
     TaskStartScenarioInPlace(PlayerPedId(), 'CODE_HUMAN_MEDIC_TEND_TO_DEAD', 0, true)
     Wait(3000)
 
-    -- https://wiki.rage.mp/wiki/Screen_FX
     ClearPedTasksImmediately(PlayerPedId())
 
-    local currentHealth = GetEntityHealth(playerPed)
-
-    local newHealth = currentHealth + 20
-    SetEntityHealth(playerPed, newHealth)
+    local currentHealth = GetEntityHealth(PlayerPedId())
+    local newHealth = currentHealth + 10
+    SetEntityHealth(PlayerPedId(), newHealth)
 end)
 
 RegisterNetEvent('ax_inventory:client:energyDrinkConsumed', function()
@@ -184,7 +182,7 @@ RegisterNetEvent('ax_inventory:client:energyDrinkConsumed', function()
     Wait(3000)
 
     -- https://wiki.rage.mp/wiki/Screen_FX
-    StartScreenEffect('PPPurple', 180000, false)
+    StartScreenEffect('PPOrange', 180000, false)
     ClearPedTasksImmediately(PlayerPedId())
 
     while timer < 180000 do
@@ -202,6 +200,25 @@ RegisterNetEvent('ax_inventory:client:cocaineConsumed', function()
     forceCloseInventory()
     StartScreenEffect('PPPurple', 180000, false)
     Wait(180000)
+    
+    SetRunSprintMultiplierForPlayer(PlayerId(), 1.00)
+end)
+
+RegisterNetEvent('ax_inventory:client:jointConsumed', function()
+    SetRunSprintMultiplierForPlayer(PlayerId(), 0.95)
+    
+    forceCloseInventory()
+    
+    TaskStartScenarioInPlace(PlayerPedId(), 'WORLD_HUMAN_SMOKING_POT', 0, true)
+    StartScreenEffect('PPGreen', 90000, false)
+
+    Wait(30000)
+    ClearPedTasksImmediately(PlayerPedId()) -- Stop the smoking animation after 30 seconds, but keep the effect for the full duration
+    local currentHealth = GetEntityHealth(PlayerPedId())
+    local newHealth = currentHealth + 12
+    SetEntityHealth(PlayerPedId(), newHealth)
+
+    Wait(90000)
     
     SetRunSprintMultiplierForPlayer(PlayerId(), 1.00)
 end)
@@ -228,6 +245,7 @@ RegisterNetEvent('ax_inventory:client:removeDrop', function(dropKey)
     if obj and DoesEntityExist(obj) then
         DeleteEntity(obj)
     end
+    DeleteObject(DropObjects[dropKey])
     DropObjects[dropKey] = nil
 end)
 
@@ -282,6 +300,127 @@ CreateThread(function()
     end
 end)
 
+local stashStatusCache = {}
+local stashStatusBusy = {}
+
+CreateThread(function()
+    while true do
+        local ped = PlayerPedId()
+        local coords = GetEntityCoords(ped)
+
+        for _, stash in ipairs(StashLocations or {}) do
+            local dist = #(coords - stash.coords)
+
+            if dist < 20.0 and not stashStatusBusy[stash.key] then
+                stashStatusBusy[stash.key] = true
+
+                CreateThread(function()
+                    local ok, status = pcall(function()
+                        return lib.callback.await('ax_inventory:server:getStashStatus', false, stash.key)
+                    end)
+
+                    if ok then
+                        stashStatusCache[stash.key] = status
+                    end
+
+                    stashStatusBusy[stash.key] = nil
+                end)
+            end
+        end
+
+        Wait(1000)
+    end
+end)
+
+CreateThread(function()
+    while true do
+        local sleep = 1000
+        local ped = PlayerPedId()
+        local coords = GetEntityCoords(ped)
+
+        for _, stash in ipairs(StashLocations or {}) do
+            local dist = #(coords - stash.coords)
+
+            if dist < 15.0 then
+                sleep = 0
+
+                DrawMarker(
+                    2,
+                    stash.coords.x, stash.coords.y, stash.coords.z + 0.15,
+                    0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.0,
+                    0.18, 0.18, 0.18,
+                    124, 58, 237, 180,
+                    false, true, 2, nil, nil, false
+                )
+
+                if dist < 1.5 then
+                    local alpha = math.floor((1.5 - dist) / 1.5 * 255)
+                    if alpha < 0 then alpha = 0 end
+                    if alpha > 255 then alpha = 255 end
+
+                    local status = stashStatusCache[stash.key]
+                    local prompt = nil
+
+                    if status and status.exists then
+                        if status.mode == 'owned' then
+                            if not status.owned then
+                                prompt = ('[E] Buy %s ($%s)'):format(status.label or 'Stash', status.price or 0)
+                            elseif status.isOwner then
+                                prompt = ('[E] Open %s'):format(status.label or 'Stash')
+                            else
+                                prompt = ('%s (Owned)'):format(status.label or 'Stash')
+                            end
+                        elseif status.mode == 'permission' then
+                            if status.canAccess then
+                                prompt = ('[E] Open %s'):format(status.label or 'Stash')
+                            else
+                                prompt = ('%s (Restricted)'):format(status.label or 'Stash')
+                            end
+                        elseif status.mode == 'public' then
+                            prompt = ('[E] Open %s'):format(status.label or 'Stash')
+                        end
+                    else
+                        prompt = ('Checking %s...'):format(stash.label or 'Stash')
+                    end
+
+                    if prompt then
+                        DrawText3D(
+                            stash.coords.x,
+                            stash.coords.y,
+                            stash.coords.z + 0.3,
+                            prompt,
+                            alpha
+                        )
+                    end
+
+                    if IsControlJustPressed(0, 38) and status and status.exists then
+                        if status.mode == 'owned' then
+                            if not status.owned then
+                                TriggerServerEvent('ax_inventory:server:buyStash', stash.key)
+                                stashStatusCache[stash.key] = nil
+                            elseif status.isOwner then
+                                inventoryOpen = true
+                                TriggerServerEvent('ax_inventory:server:openStash', stash.key)
+                            end
+                        elseif status.mode == 'permission' then
+                            if status.canAccess then
+                                inventoryOpen = true
+                                TriggerServerEvent('ax_inventory:server:openStash', stash.key)
+                            end
+                        elseif status.mode == 'public' then
+                            inventoryOpen = true
+                            TriggerServerEvent('ax_inventory:server:openStash', stash.key)
+                        end
+                    end
+                end
+            end
+        end
+
+        Wait(sleep)
+    end
+end)
+
 RegisterNetEvent('ax_inventory:client:openSecondaryInventory', function(data)
     if not data or not data.inventory or not data.playerInventory then return end
 
@@ -289,9 +428,10 @@ RegisterNetEvent('ax_inventory:client:openSecondaryInventory', function(data)
     SetNuiFocus(true, true)
 
     SendNUIMessage({
-        action = 'openDropInventory',
+        action = 'openSecondaryInventory',
         key = data.key,
         type = data.type,
+        label = data.label,
         playerInventory = data.playerInventory,
         inventory = data.inventory,
         items = Items

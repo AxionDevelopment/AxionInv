@@ -5,7 +5,7 @@ lua54 'yes'
 name 'ax_inventory'
 author 'AxionDevelopment | SpunkyDunkie'
 description 'SQL-backed modular inventory base'
-version '0.1.0'
+version '0.2.1'
 
 ui_page 'axioninv/web/index.html'
 
@@ -20,6 +20,7 @@ shared_scripts {
     '@ox_lib/init.lua',
     'configs/items.lua',
     'configs/inventories.lua',
+    'configs/config.lua',
     'axioninv/shared/utils.lua'
 }
 

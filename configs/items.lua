@@ -6,7 +6,7 @@ Items = {
         usable = true,
         closeOnUse = true,
         image = 'bandage.webp',
-        description = 'Used to stop bleeding.'
+        description = 'Restore 10% of your health.'
     },
 
     energydrink = {
@@ -21,11 +21,21 @@ Items = {
 
     cocaine = {
         label = 'Cocaine',
-        weight = 500,
+        weight = 200,
         stack = 5,
         usable = true,
         closeOnUse = true,
         image = 'cocaine.webp',
         description = 'Used to increase stamina and speed for 3 minutes.'
+    },
+
+    joint = {
+        label = 'Joint',
+        weight = 200,
+        stack = 5,
+        usable = true,
+        closeOnUse = true,
+        image = 'joint.webp',
+        description = 'Slows you down but restores 15% of your health.'
     }
 }

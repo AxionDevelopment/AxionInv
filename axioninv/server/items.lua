@@ -42,6 +42,17 @@ ItemHandlers.cocaine = function(src, inv, slot, item)
     return buildUseResponse(inv)
 end
 
+ItemHandlers.joint = function(src, inv, slot, item)
+    local success, err = RemoveItemFromSlot(inv, slot, 1)
+    if not success then
+        return { ok = false, error = err }
+    end
+
+    exports['AxionNotifications']:Notify(src, "You smoked a joint.", "info", 5000)
+    TriggerClientEvent('ax_inventory:client:jointConsumed', src)
+    return buildUseResponse(inv)
+end
+
 function InventoryItems.Use(src, inv, slot)
     slot = tonumber(slot)
 

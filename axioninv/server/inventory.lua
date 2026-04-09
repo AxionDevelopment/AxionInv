@@ -6,6 +6,20 @@ local function getDefaultConfig(inventoryType)
     return InventoryDefaults[inventoryType] or InventoryDefaults.player
 end
 
+local function getStashConfig(ownerId)
+    for _, stash in ipairs(StashLocations or {}) do
+        if stash.key == ownerId then
+            return {
+                label = stash.label or 'Stash',
+                slots = stash.slots or InventoryDefaults.stash.slots,
+                maxWeight = stash.maxWeight or InventoryDefaults.stash.maxWeight
+            }
+        end
+    end
+
+    return InventoryDefaults.stash
+end
+
 local function makeCacheKey(ownerType, ownerId, inventoryType)
     return ('%s:%s:%s'):format(ownerType, ownerId, inventoryType)
 end
@@ -92,7 +106,14 @@ function GetInventory(ownerType, ownerId, inventoryType)
     local inv = DB.fetchInventory(ownerType, ownerId, inventoryType)
 
     if not inv then
-        local defaults = getDefaultConfig(inventoryType)
+        local defaults = nil
+
+        if inventoryType == 'stash' then
+            defaults = getStashConfig(ownerId)
+        else
+            defaults = getDefaultConfig(inventoryType)
+        end
+
         DB.createInventory(ownerType, ownerId, inventoryType, defaults.label, defaults.slots, defaults.maxWeight)
         inv = DB.fetchInventory(ownerType, ownerId, inventoryType)
     end
@@ -503,10 +524,38 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
     return true
 end
 
+local function getOwnedStashRow(ownerId)
+    return MySQL.single.await('SELECT * FROM owned_stashes WHERE stash_key = ?', { ownerId })
+end
+
+local function getStashConfig(ownerId)
+    local owned = getOwnedStashRow(ownerId)
+
+    if owned then
+        return {
+            label = owned.label or 'Stash',
+            slots = owned.slots or InventoryDefaults.stash.slots,
+            maxWeight = owned.max_weight or InventoryDefaults.stash.maxWeight
+        }
+    end
+
+    for _, stash in ipairs(StashLocations or {}) do
+        if stash.key == ownerId then
+            return {
+                label = stash.label or 'Stash',
+                slots = stash.slots or InventoryDefaults.stash.slots,
+                maxWeight = stash.maxWeight or InventoryDefaults.stash.maxWeight
+            }
+        end
+    end
+
+    return InventoryDefaults.stash
+end
+
 CreateThread(function()
     while true do
         Wait(60 * 1000) -- every 60 seconds
-        PurgeExpiredDrops(20) -- purge drops older than 20 minutes
+        PurgeExpiredDrops(AxionInv.PurgeDropsAge) -- purge drops older than configured minutes
     end
 end)
 

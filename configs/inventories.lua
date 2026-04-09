@@ -29,3 +29,32 @@ InventoryDefaults = {
         maxWeight = 100000
     }
 }
+
+StashLocations = {
+    {
+        key = 'locker_1',
+        label = 'Test Buyable Locker',
+        coords = vec3(-369.43, -119.5, 38.7),
+        slots = 40,
+        maxWeight = 50000,
+        mode = 'owned',
+        price = 5000
+    },
+    {
+        key = 'police_evidence',
+        label = 'Test Evidence Locker',
+        coords = vec3(-362.99, -121.87, 38.7),
+        slots = 80,
+        maxWeight = 200000,
+        mode = 'permission',
+        permission = 'axioninv.police.evidence'
+    },
+    {
+        key = 'shared_storage',
+        label = 'Test Shared Storage',
+        coords = vec3(-365.50, -118.50, 38.7),
+        slots = 50,
+        maxWeight = 120000,
+        mode = 'public'
+    }
+}

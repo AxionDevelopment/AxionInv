@@ -22,6 +22,68 @@ RegisterNetEvent('ax_inventory:server:testAdd', function(item)
     end
 end)
 
+local function getPlayerLicense(src)
+    for _, identifier in ipairs(GetPlayerIdentifiers(src)) do
+        if identifier:find('license:') == 1 then
+            return identifier
+        end
+    end
+
+    return nil
+end
+
+local function getStashByKey(stashKey)
+    for _, stash in ipairs(StashLocations or {}) do
+        if stash.key == stashKey then
+            return stash
+        end
+    end
+
+    return nil
+end
+
+local function getOwnedStash(stashKey)
+    return MySQL.single.await('SELECT * FROM owned_stashes WHERE stash_key = ?', { stashKey })
+end
+
+local function canAccessStash(src, stash)
+    if not stash then
+        return false, 'Invalid stash.'
+    end
+
+    if stash.mode == 'public' then
+        return true
+    end
+
+    if stash.mode == 'permission' then
+        if stash.permission and IsPlayerAceAllowed(src, stash.permission) then
+            return true
+        end
+
+        return false, 'You do not have permission to open this stash.'
+    end
+
+    if stash.mode == 'owned' then
+        local license = getPlayerLicense(src)
+        if not license then
+            return false, 'Unable to identify player.'
+        end
+
+        local owned = getOwnedStash(stash.key)
+        if not owned then
+            return false, 'unowned'
+        end
+
+        if owned.owner_identifier ~= license then
+            return false, 'This stash belongs to someone else.'
+        end
+
+        return true
+    end
+
+    return false, 'Invalid stash mode.'
+end
+
 lib.callback.register('ax_inventory:server:getPlayerInventory', function(source)
     local inv = GetPlayerInventory(source)
     if not inv then return nil end
@@ -210,6 +272,8 @@ lib.callback.register('ax_inventory:server:moveItemBetween', function(source, da
 
     if secondaryType == 'drop' and secondaryKey then
         secondaryInv = GetInventory('drop', secondaryKey, 'drop')
+    elseif secondaryType == 'stash' and secondaryKey then
+        secondaryInv = GetInventory('stash', secondaryKey, 'stash')
     end
 
     local fromInv = nil
@@ -249,6 +313,8 @@ lib.callback.register('ax_inventory:server:moveSecondaryItem', function(source, 
 
     if secondaryType == 'drop' and secondaryKey then
         inv = GetInventory('drop', secondaryKey, 'drop')
+    elseif secondaryType == 'stash' and secondaryKey then
+        inv = GetInventory('stash', secondaryKey, 'stash')
     end
 
     if not inv then
@@ -265,4 +331,122 @@ lib.callback.register('ax_inventory:server:moveSecondaryItem', function(source, 
         ok = true,
         inventory = Inventory.BuildPayload(inv)
     }
+end)
+
+lib.callback.register('ax_inventory:server:getStashStatus', function(source, stashKey)
+    local stash = getStashByKey(stashKey)
+    if not stash then
+        return { exists = false }
+    end
+
+    if stash.mode == 'owned' then
+        local license = getPlayerLicense(source)
+        if not license then
+            return { exists = false }
+        end
+
+        local owned = getOwnedStash(stashKey)
+
+        if not owned then
+            return {
+                exists = true,
+                mode = 'owned',
+                owned = false,
+                isOwner = false,
+                label = stash.label or 'Stash',
+                price = stash.price or 0
+            }
+        end
+
+        return {
+            exists = true,
+            mode = 'owned',
+            owned = true,
+            isOwner = owned.owner_identifier == license,
+            label = stash.label or 'Stash',
+            price = stash.price or 0
+        }
+    end
+
+    if stash.mode == 'permission' then
+        return {
+            exists = true,
+            mode = 'permission',
+            canAccess = stash.permission and IsPlayerAceAllowed(source, stash.permission) or false,
+            label = stash.label or 'Stash'
+        }
+    end
+
+    if stash.mode == 'public' then
+        return {
+            exists = true,
+            mode = 'public',
+            canAccess = true,
+            label = stash.label or 'Stash'
+        }
+    end
+
+    return { exists = false }
+end)
+
+RegisterNetEvent('ax_inventory:server:buyStash', function(stashKey)
+    local src = source
+    local license = getPlayerLicense(src)
+    if not license then return end
+
+    local stash = getStashByKey(stashKey)
+    if not stash or stash.mode ~= 'owned' then return end
+
+    local existing = getOwnedStash(stashKey)
+    if existing then
+        exports['AxionNotifications']:Notify(src, "This stash is already owned.", "error", 5000)
+        return
+    end
+
+    local price = tonumber(stash.price) or 0
+
+    -- TODO: currency check/remove goes here later
+
+    MySQL.insert.await([[
+        INSERT INTO owned_stashes (stash_key, owner_identifier, label, slots, max_weight, tier)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ]], {
+        stash.key,
+        license,
+        stash.label or 'Stash',
+        stash.slots or 40,
+        stash.maxWeight or 50000,
+        1
+    })
+
+    exports['AxionNotifications']:Notify(src, ("You purchased %s for $%s."):format(stash.label or 'Stash', price), "success", 5000)
+end)
+
+RegisterNetEvent('ax_inventory:server:openStash', function(stashKey)
+    local src = source
+    local stash = getStashByKey(stashKey)
+    if not stash then return end
+
+    local allowed, reason = canAccessStash(src, stash)
+
+    if not allowed then
+        if reason == 'unowned' then
+            exports['AxionNotifications']:Notify(src, ('This stash is unowned. Price: $%s'):format(stash.price or 0), "info", 5000)
+        else
+            exports['AxionNotifications']:Notify(src, reason or "Access denied.", "error", 5000)
+        end
+        return
+    end
+
+    local playerInv = GetPlayerInventory(src)
+    local stashInv = GetInventory('stash', stash.key, 'stash')
+
+    TriggerClientEvent('ax_inventory:client:openSecondaryInventory', src, {
+        key = stash.key,
+        type = 'stash',
+        label = stash.label or 'Stash',
+        playerInventory = Inventory.BuildPayload(playerInv),
+        inventory = Inventory.BuildPayload(stashInv),
+        items = Items
+    })
 end)

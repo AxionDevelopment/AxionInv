@@ -14,11 +14,13 @@ const splitCancelBtn = document.getElementById('splitCancelBtn');
 const contextUseBtn = document.getElementById('contextUseBtn');
 const contextSplitOneBtn = document.getElementById('contextSplitOneBtn');
 const contextSplitCustomBtn = document.getElementById('contextSplitCustomBtn');
+const itemTooltip = document.getElementById('itemTooltip');
 
 let playerInventory = null;
 let secondaryInventory = null;
 let secondaryType = null;
 let secondaryKey = null;
+let secondaryLabel = null;
 let itemDefs = {};
 
 let dragging = false;
@@ -57,6 +59,7 @@ function resetDragState() {
     rightClickMoved = false;
     removeDragGhost();
     clearHoverVisuals();
+    hideItemTooltip();
 }
 
 function getInventoryByPanel(panel) {
@@ -198,6 +201,61 @@ function requestDragFrame() {
     });
 }
 
+function formatItemWeight(weight, amount = 1) {
+    const total = Number(weight || 0) * Number(amount || 1);
+
+    if (total >= 1000) {
+        return `${(total / 1000).toFixed(2)} kg`;
+    }
+
+    return `${total} g`;
+}
+
+function showItemTooltip(item, def, x, y) {
+    if (!item || !def || !itemTooltip) return;
+
+    const singleWeight = Number(def.weight || 0);
+
+    itemTooltip.innerHTML = `
+        <div class="item-tooltip-title">${def.label || item.name}</div>
+        <div class="item-tooltip-meta">
+            Weight: ${formatItemWeight(singleWeight)} each<br>
+            Stack: ${formatItemWeight(singleWeight, item.amount)} total
+        </div>
+        <div class="item-tooltip-desc">${def.description || 'No description.'}</div>
+    `;
+
+    itemTooltip.classList.remove('hidden');
+    moveItemTooltip(x, y);
+}
+
+function moveItemTooltip(x, y) {
+    if (!itemTooltip || itemTooltip.classList.contains('hidden')) return;
+
+    const offset = 14;
+    const tooltipWidth = itemTooltip.offsetWidth || 220;
+    const tooltipHeight = itemTooltip.offsetHeight || 80;
+
+    let left = x + offset;
+    let top = y + offset;
+
+    if (left + tooltipWidth > window.innerWidth - 10) {
+        left = x - tooltipWidth - offset;
+    }
+
+    if (top + tooltipHeight > window.innerHeight - 10) {
+        top = y - tooltipHeight - offset;
+    }
+
+    itemTooltip.style.left = `${left}px`;
+    itemTooltip.style.top = `${top}px`;
+}
+
+function hideItemTooltip() {
+    if (!itemTooltip) return;
+    itemTooltip.classList.add('hidden');
+}
+
 function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
     gridEl.innerHTML = '';
 
@@ -206,7 +264,7 @@ function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
         return;
     }
 
-    weightEl.textContent = `${inventory.currentWeight} / ${inventory.maxWeight}`;
+    weightEl.textContent = `${inventory.currentWeight} g / ${inventory.maxWeight} g`;
 
     for (let i = 1; i <= inventory.slots; i++) {
         const slotEl = document.createElement('div');
@@ -277,6 +335,24 @@ function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
                     rightClickMoved = false;
                 }
             });
+
+            slotEl.addEventListener('mouseenter', (event) => {
+                if (dragging) return;
+                showItemTooltip(item, def, event.clientX, event.clientY);
+            });
+
+            slotEl.addEventListener('mousemove', (event) => {
+                if (dragging) {
+                    hideItemTooltip();
+                    return;
+                }
+
+                moveItemTooltip(event.clientX, event.clientY);
+            });
+
+            slotEl.addEventListener('mouseleave', () => {
+                hideItemTooltip();
+            });
         } else {
             const empty = document.createElement('div');
             empty.className = 'slot-empty';
@@ -298,13 +374,56 @@ function render() {
 
     if (!secondaryInventory) {
         secondaryTitle.textContent = 'No Container Open';
+    } else if (secondaryType === 'drop') {
+        secondaryTitle.textContent = 'Ground Drop';
+    } else if (secondaryType === 'stash') {
+        secondaryTitle.textContent = secondaryLabel || 'Stash';
     } else {
-        secondaryTitle.textContent = secondaryType === 'drop' ? 'Ground Drop' : 'Container';
+        secondaryTitle.textContent = secondaryLabel || 'Container';
     }
 
     if (dragging) {
         updateHoverVisuals();
     }
+}
+
+function isInventoryEmpty(inventory) {
+    if (!inventory) return true;
+    if (!inventory.items) return true;
+
+    for (const key in inventory.items) {
+        const item = inventory.items[key];
+        if (item && Number(item.amount) > 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+async function closeIfEmptyDrop() {
+    if (secondaryType !== 'drop') {
+        return false;
+    }
+
+    if (!secondaryInventory || isInventoryEmpty(secondaryInventory)) {
+        playerInventory = null;
+        secondaryInventory = null;
+        secondaryType = null;
+        secondaryKey = null;
+        secondaryLabel = null;
+
+        resetDragState();
+        hideContextMenu();
+        hideSplitPrompt();
+        hideItemTooltip();
+        app.classList.add('hidden');
+
+        await nui('close');
+        return true;
+    }
+
+    return false;
 }
 
 async function handleDrop(targetPanel, targetSlot) {
@@ -339,7 +458,7 @@ async function handleDrop(targetPanel, targetSlot) {
                 return;
             }
 
-            playerInventory = result.inventory;
+            playerInventory = result.inventory || null;
             render();
             return;
         }
@@ -359,7 +478,12 @@ async function handleDrop(targetPanel, targetSlot) {
                 return;
             }
 
-            secondaryInventory = result.inventory;
+            secondaryInventory = result.inventory || null;
+
+            if (await closeIfEmptyDrop()) {
+                return;
+            }
+
             render();
             return;
         }
@@ -381,8 +505,13 @@ async function handleDrop(targetPanel, targetSlot) {
         return;
     }
 
-    playerInventory = result.playerInventory;
-    secondaryInventory = result.secondaryInventory;
+    playerInventory = result.playerInventory || null;
+    secondaryInventory = result.secondaryInventory || null;
+
+    if (await closeIfEmptyDrop()) {
+        return;
+    }
+
     render();
 }
 
@@ -559,6 +688,7 @@ closeBtn.addEventListener('click', async (event) => {
     resetDragState();
     hideContextMenu();
     hideSplitPrompt();
+    hideItemTooltip();
 
     await nui('close');
 });
@@ -568,6 +698,7 @@ window.addEventListener('keydown', async (event) => {
         resetDragState();
         hideContextMenu();
         hideSplitPrompt();
+        hideItemTooltip();
         await nui('close');
     }
 });
@@ -580,6 +711,7 @@ window.addEventListener('message', (event) => {
         secondaryInventory = null;
         secondaryType = null;
         secondaryKey = null;
+        secondaryLabel = null;
         itemDefs = data.items || {};
         app.classList.remove('hidden');
         render();
@@ -591,9 +723,11 @@ window.addEventListener('message', (event) => {
         secondaryInventory = null;
         secondaryType = null;
         secondaryKey = null;
+        secondaryLabel = null;
         resetDragState();
         hideContextMenu();
         hideSplitPrompt();
+        hideItemTooltip();
         app.classList.add('hidden');
         return;
     }
@@ -605,11 +739,12 @@ window.addEventListener('message', (event) => {
         return;
     }
 
-    if (data.action === 'openDropInventory') {
+    if (data.action === 'openSecondaryInventory') {
         playerInventory = data.playerInventory;
         secondaryInventory = data.inventory;
-        secondaryType = 'drop';
+        secondaryType = data.type || 'drop';
         secondaryKey = data.key;
+        secondaryLabel = data.label || null;
         itemDefs = data.items || {};
         app.classList.remove('hidden');
         render();
@@ -621,4 +756,5 @@ window.addEventListener('blur', () => {
     resetDragState();
     hideContextMenu();
     hideSplitPrompt();
+    hideItemTooltip();
 });
