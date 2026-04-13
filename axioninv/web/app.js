@@ -750,6 +750,20 @@ window.addEventListener('message', (event) => {
         render();
         return;
     }
+
+    if (data.action === 'updateSecondaryInventory') {
+        playerInventory = data.playerInventory;
+        secondaryInventory = data.inventory;
+        secondaryType = data.type || secondaryType;
+        secondaryKey = data.key ?? secondaryKey;
+        itemDefs = data.items || itemDefs;
+        hideContextMenu();
+        hideSplitPrompt();
+        hideItemTooltip();
+        resetDragState();
+        render();
+        return;
+    }
 });
 
 window.addEventListener('blur', () => {

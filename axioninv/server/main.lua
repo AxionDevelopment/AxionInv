@@ -1,26 +1,48 @@
-RegisterCommand('purgedrops', function(args, raw)
-    PurgeExpiredDrops(0) -- purge all drops immediately
+local ActiveRobberies = {}
+local SecondaryViewers = {}
+
+RegisterCommand('purgedrops', function(source)
+    if source > 0 then
+        if IsPlayerAceAllowed(source, "axioninv.purgedrops") then
+            PurgeExpiredDrops(0) -- purge all drops immediately
+            exports['AxionNotifications']:Notify(source, "Drops purged successfully.", "success", 5000)
+        else
+            exports['AxionNotifications']:Notify(source, 'You do not have permission to use this command.', 'error', 5000)
+        end
+    else
+        PurgeExpiredDrops(0)
+        print('[ax_inventory] Drops purged successfully.')
+    end
 end, true)
 
-RegisterNetEvent('ax_inventory:server:testAdd', function(item)
-    local src = source
+RegisterCommand('additem', function(source, args)
+    if IsPlayerAceAllowed(source, "axioninv.additem") then
+        local src = source
 
-    local ok, err = pcall(function()
-        if not DB.isReady() then
-            print('[ax_inventory] DB is not ready')
-            return
+        local ok, err = pcall(function()
+            if not DB.isReady() then
+                print('[ax_inventory] DB is not ready')
+                return
+            end
+
+            local item = args[1]
+            local amount = tonumber(args[2]) or 1
+
+            local inv = GetPlayerInventory(src)
+            local success, result = AddItem(inv, item, amount)
+
+            print(('[ax_inventory] AddItem result: %s / %s'):format(tostring(success), tostring(result)))
+            exports['AxionNotifications']:Notify(source, ("AddItem result: %s / %s"):format(tostring(success), tostring(result)), "info", 5000)
+        end)
+
+        if not ok then
+            print(('[ax_inventory] AddItem crashed: %s'):format(err))
+            exports['AxionNotifications']:Notify(source, ("AddItem crashed: %s"):format(err), "success", 5000)
         end
-
-        local inv = GetPlayerInventory(src)
-        local success, result = AddItem(inv, item, 1)
-
-        print(('[ax_inventory] AddItem result: %s / %s'):format(tostring(success), tostring(result)))
-    end)
-
-    if not ok then
-        print(('[ax_inventory] testAdd crashed: %s'):format(err))
+    else
+        exports['AxionNotifications']:Notify(source, 'You do not have permission to use this command.', 'error', 5000)
     end
-end)
+end, false)
 
 local function getPlayerLicense(src)
     for _, identifier in ipairs(GetPlayerIdentifiers(src)) do
@@ -30,6 +52,108 @@ local function getPlayerLicense(src)
     end
 
     return nil
+end
+
+local function getSecondaryViewerId(invType, invKey)
+    return tostring(invType) .. ':' .. tostring(invKey)
+end
+
+local function removePlayerFromAllSecondaryViewers(src)
+    for viewerId, viewers in pairs(SecondaryViewers) do
+        viewers[src] = nil
+
+        if not next(viewers) then
+            SecondaryViewers[viewerId] = nil
+        end
+    end
+end
+
+local function registerSecondaryViewer(src, invType, invKey)
+    removePlayerFromAllSecondaryViewers(src)
+
+    local viewerId = getSecondaryViewerId(invType, invKey)
+    SecondaryViewers[viewerId] = SecondaryViewers[viewerId] or {}
+    SecondaryViewers[viewerId][src] = true
+end
+
+local function unregisterSecondaryViewer(src, invType, invKey)
+    if not invType or not invKey then
+        removePlayerFromAllSecondaryViewers(src)
+        return
+    end
+
+    local viewerId = getSecondaryViewerId(invType, invKey)
+    local viewers = SecondaryViewers[viewerId]
+    if not viewers then return end
+
+    viewers[src] = nil
+
+    if not next(viewers) then
+        SecondaryViewers[viewerId] = nil
+    end
+end
+
+local function getSecondaryInventoryByTypeAndKey(invType, invKey)
+    if invType == 'drop' and invKey then
+        return GetInventory('drop', invKey, 'drop')
+    elseif invType == 'stash' and invKey then
+        return GetInventory('stash', invKey, 'stash')
+    elseif invType == 'player' and invKey then
+        local targetId = tonumber(invKey)
+        if targetId and GetPlayerName(targetId) then
+            return GetPlayerInventory(targetId)
+        end
+    end
+
+    return nil
+end
+
+local function refreshSecondaryViewers(invType, invKey)
+    local viewerId = getSecondaryViewerId(invType, invKey)
+    local viewers = SecondaryViewers[viewerId]
+    if not viewers then return end
+
+    local secondaryInv = getSecondaryInventoryByTypeAndKey(invType, invKey)
+    if not secondaryInv then
+        for src in pairs(viewers) do
+            TriggerClientEvent('ax_inventory:client:forceClose', src)
+        end
+
+        SecondaryViewers[viewerId] = nil
+        return
+    end
+
+    local secondaryPayload = Inventory.BuildPayload(secondaryInv)
+
+    for src in pairs(viewers) do
+        if GetPlayerName(src) then
+            local playerInv = GetPlayerInventory(src)
+
+            if playerInv then
+                TriggerClientEvent('ax_inventory:client:updateSecondaryInventory', src, {
+                    key = invKey,
+                    type = invType,
+                    playerInventory = Inventory.BuildPayload(playerInv),
+                    inventory = secondaryPayload,
+                    items = Items
+                })
+            end
+        end
+    end
+end
+
+local function getPlayersWithinDistance(source, target, maxDistance)
+    local srcPed = GetPlayerPed(source)
+    local targetPed = GetPlayerPed(target)
+
+    if srcPed == 0 or targetPed == 0 then
+        return false
+    end
+
+    local srcCoords = GetEntityCoords(srcPed)
+    local targetCoords = GetEntityCoords(targetPed)
+
+    return #(srcCoords - targetCoords) <= (maxDistance or 2.0)
 end
 
 local function getStashByKey(stashKey)
@@ -246,6 +370,8 @@ RegisterNetEvent('ax_inventory:server:openDrop', function(dropKey)
 
     if not playerInv or not dropInv then return end
 
+    registerSecondaryViewer(src, 'drop', dropKey)
+
     TriggerClientEvent('ax_inventory:client:openSecondaryInventory', src, {
         key = dropKey,
         type = 'drop',
@@ -274,6 +400,46 @@ lib.callback.register('ax_inventory:server:moveItemBetween', function(source, da
         secondaryInv = GetInventory('drop', secondaryKey, 'drop')
     elseif secondaryType == 'stash' and secondaryKey then
         secondaryInv = GetInventory('stash', secondaryKey, 'stash')
+    elseif secondaryType == 'player' and secondaryKey then
+        local targetId = tonumber(secondaryKey)
+
+        if not targetId or not GetPlayerName(targetId) then
+            return { ok = false, error = 'target player not found' }
+        end
+
+        if not AxionInv.EnablePlayerRobbery then
+            return { ok = false, error = 'player robbing disabled' }
+        end
+
+        if not getPlayersWithinDistance(source, targetId, AxionInv.RobDistance or 2.0) then
+            return { ok = false, error = 'target too far away' }
+        end
+
+        local handsUp = lib.callback.await('ax_inventory:client:isHandsUp', targetId)
+        if not handsUp then
+            return { ok = false, error = 'target is not hands up' }
+        end
+
+        secondaryInv = GetPlayerInventory(targetId)
+    end
+
+    if secondaryType == 'player' then
+        local targetId = tonumber(secondaryKey)
+
+        if not getPlayersWithinDistance(source, targetId, AxionInv.RobDistance or 2.0) then
+            TriggerClientEvent('ax_inventory:client:forceCloseInventory', source)
+            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
+            ActiveRobberies[source] = nil
+            return { ok = false, error = 'target moved away' }
+        end
+
+        local handsUp = lib.callback.await('ax_inventory:client:isHandsUp', targetId)
+        if not handsUp then
+            TriggerClientEvent('ax_inventory:client:forceCloseInventory', source)
+            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
+            ActiveRobberies[source] = nil
+            return { ok = false, error = 'hands not up' }
+        end
     end
 
     local fromInv = nil
@@ -288,9 +454,19 @@ lib.callback.register('ax_inventory:server:moveItemBetween', function(source, da
         return { ok = false, error = 'invalid inventory target' }
     end
 
+    if secondaryType == 'player' then
+        if fromPanel ~= 'secondary' or toPanel ~= 'player' then
+            return { ok = false, error = 'you can only take items while robbing' }
+        end
+    end
+
     local success, err = MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
     if not success then
         return { ok = false, error = err }
+    end
+
+    if secondaryType and secondaryKey then
+        refreshSecondaryViewers(secondaryType, secondaryKey)
     end
 
     return {
@@ -315,6 +491,8 @@ lib.callback.register('ax_inventory:server:moveSecondaryItem', function(source, 
         inv = GetInventory('drop', secondaryKey, 'drop')
     elseif secondaryType == 'stash' and secondaryKey then
         inv = GetInventory('stash', secondaryKey, 'stash')
+    elseif secondaryType == 'player' and secondaryKey then
+        return { ok = false, error = 'cannot reorder robbed player inventory' }
     end
 
     if not inv then
@@ -327,6 +505,9 @@ lib.callback.register('ax_inventory:server:moveSecondaryItem', function(source, 
         return { ok = false, error = err }
     end
 
+    if secondaryType and secondaryKey then
+        refreshSecondaryViewers(secondaryType, secondaryKey)
+    end
     return {
         ok = true,
         inventory = Inventory.BuildPayload(inv)
@@ -441,6 +622,8 @@ RegisterNetEvent('ax_inventory:server:openStash', function(stashKey)
     local playerInv = GetPlayerInventory(src)
     local stashInv = GetInventory('stash', stash.key, 'stash')
 
+    registerSecondaryViewer(src, 'stash', stash.key)
+
     TriggerClientEvent('ax_inventory:client:openSecondaryInventory', src, {
         key = stash.key,
         type = 'stash',
@@ -449,4 +632,100 @@ RegisterNetEvent('ax_inventory:server:openStash', function(stashKey)
         inventory = Inventory.BuildPayload(stashInv),
         items = Items
     })
+end)
+
+RegisterNetEvent('ax_inventory:server:tryRobPlayer', function(targetId)
+    local src = source
+    targetId = tonumber(targetId)
+
+    if not AxionInv.EnablePlayerRobbery then
+        exports['AxionNotifications']:Notify(src, 'Player robbing is disabled.', 'error', 5000)
+        return
+    end
+
+    if not targetId or targetId == src then
+        exports['AxionNotifications']:Notify(src, 'Invalid target.', 'error', 5000)
+        return
+    end
+
+    if not GetPlayerName(targetId) then
+        exports['AxionNotifications']:Notify(src, 'Target player not found.', 'error', 5000)
+        return
+    end
+
+    if not getPlayersWithinDistance(src, targetId, AxionInv.RobDistance or 2.0) then
+        exports['AxionNotifications']:Notify(src, 'You are too far away.', 'error', 5000)
+        return
+    end
+
+    local handsUp = lib.callback.await('ax_inventory:client:isHandsUp', targetId)
+    if not handsUp then
+        exports['AxionNotifications']:Notify(src, 'Target must have their hands up.', 'error', 5000)
+        return
+    end
+
+    local playerInv = GetPlayerInventory(src)
+    local targetInv = GetPlayerInventory(targetId)
+
+    if not playerInv or not targetInv then
+        exports['AxionNotifications']:Notify(src, 'Failed to open robbery inventory.', 'error', 5000)
+        return
+    end
+
+    if AxionInv.FreezeOnRob then
+        TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, true)
+    end
+
+    ActiveRobberies[src] = targetId
+
+    registerSecondaryViewer(src, 'player', tostring(targetId))
+
+    TriggerClientEvent('ax_inventory:client:openSecondaryInventory', src, {
+        key = tostring(targetId),
+        type = 'player',
+        label = ('Robbing %s'):format(GetPlayerName(targetId) or 'Player'),
+        playerInventory = Inventory.BuildPayload(playerInv),
+        inventory = Inventory.BuildPayload(targetInv),
+        items = Items
+    })
+end)
+
+RegisterNetEvent('ax_inventory:server:stopRobbing', function()
+    local src = source
+    local targetId = ActiveRobberies[src]
+
+    if targetId then
+        if AxionInv.FreezeOnRob then
+            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
+        end
+
+        ActiveRobberies[src] = nil
+    end
+end)
+
+AddEventHandler('playerDropped', function()
+    local src = source
+
+    if ActiveRobberies[src] then
+        local targetId = ActiveRobberies[src]
+
+        if targetId then
+            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
+        end
+
+        ActiveRobberies[src] = nil
+    end
+
+    for robber, target in pairs(ActiveRobberies) do
+        if target == src then
+            ActiveRobberies[robber] = nil
+        end
+    end
+
+    removePlayerFromAllSecondaryViewers(src)
+end)
+
+RegisterNetEvent('ax_inventory:server:closeSecondaryInventory', function(invType, invKey)
+    local src = source
+    unregisterSecondaryViewer(src, invType, invKey)
 end)

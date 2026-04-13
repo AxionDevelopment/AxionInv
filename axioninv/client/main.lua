@@ -1,15 +1,47 @@
 local inventoryOpen = false
+local currentSecondaryType = nil
+local currentSecondaryKey = nil
 WorldDrops = WorldDrops or {}
 DropObjects = DropObjects or {}
 local stashBlips = {}
 
 local function forceCloseInventory()
+    if currentSecondaryType and currentSecondaryKey then
+        TriggerServerEvent('ax_inventory:server:closeSecondaryInventory', currentSecondaryType, currentSecondaryKey)
+    end
+
     inventoryOpen = false
+    currentSecondaryType = nil
+    currentSecondaryKey = nil
     SetNuiFocus(false, false)
 
     SendNUIMessage({
         action = 'close'
     })
+end
+
+local function getClosestPlayer(maxDistance)
+    local myPed = PlayerPedId()
+    local myCoords = GetEntityCoords(myPed)
+    local closestPlayer = -1
+    local closestDistance = maxDistance or 2.0
+
+    for _, player in ipairs(GetActivePlayers()) do
+        if player ~= PlayerId() then
+            local targetPed = GetPlayerPed(player)
+            if DoesEntityExist(targetPed) then
+                local targetCoords = GetEntityCoords(targetPed)
+                local dist = #(myCoords - targetCoords)
+
+                if dist <= closestDistance then
+                    closestDistance = dist
+                    closestPlayer = player
+                end
+            end
+        end
+    end
+
+    return closestPlayer, closestDistance
 end
 
 function DrawText3D(x, y, z, text, alpha)
@@ -169,11 +201,28 @@ end, false)
 RegisterCommand('-openinventory', function()
 end, false)
 
-RegisterKeyMapping('+openinventory', 'Open Inventory', 'keyboard', 'TAB')
+RegisterCommand(AxionInv.RobCommand or 'rob', function()
+    if not AxionInv.EnablePlayerRobbery then
+        exports['AxionNotifications']:Notify('Player robbing is disabled.', 'error', 5000)
+        return
+    end
 
-RegisterCommand('invtest', function(source, args, raw)
-    TriggerServerEvent('ax_inventory:server:testAdd', args[1])
+    if inventoryOpen then
+        exports['AxionNotifications']:Notify('Close the current inventory first.', 'error', 5000)
+        return
+    end
+
+    local closestPlayer = getClosestPlayer(AxionInv.RobDistance or 2.0)
+    if closestPlayer == -1 then
+        exports['AxionNotifications']:Notify('No player nearby to rob.', 'error', 5000)
+        return
+    end
+
+    local targetServerId = GetPlayerServerId(closestPlayer)
+    TriggerServerEvent('ax_inventory:server:tryRobPlayer', targetServerId)
 end, false)
+
+RegisterKeyMapping('+openinventory', 'Open Inventory', 'keyboard', 'TAB')
 
 RegisterNUICallback('close', function(_, cb)
     forceCloseInventory()
@@ -230,6 +279,27 @@ RegisterNUICallback('splitCustom', function(data, cb)
     lib.callback('ax_inventory:server:splitCustom', false, function(result)
         cb(result or { ok = false, error = 'no response' })
     end, data.slot, data.amount)
+end)
+
+lib.callback.register('ax_inventory:client:isHandsUp', function()
+    local ped = PlayerPedId()
+
+    return IsEntityPlayingAnim(
+        ped,
+        AxionInv.HandsUpAnimDict,
+        AxionInv.HandsUpAnimName,
+        3
+    )
+end)
+
+RegisterNetEvent('ax_inventory:client:setRobFrozen', function(state)
+    local ped = PlayerPedId()
+
+    FreezeEntityPosition(ped, state)
+
+    if state then
+        DisableAllControlActions(0)
+    end
 end)
 
 RegisterNetEvent('ax_inventory:client:forceClose', function()
@@ -508,6 +578,8 @@ RegisterNetEvent('ax_inventory:client:openSecondaryInventory', function(data)
     if not data or not data.inventory or not data.playerInventory then return end
 
     inventoryOpen = true
+    currentSecondaryType = data.type
+    currentSecondaryKey = data.key
     SetNuiFocus(true, true)
 
     SendNUIMessage({
@@ -525,4 +597,32 @@ RegisterNUICallback('moveSecondaryItem', function(data, cb)
     lib.callback('ax_inventory:server:moveSecondaryItem', false, function(result)
         cb(result or { ok = false, error = 'no response from server' })
     end, data.fromSlot, data.toSlot, data.amount, data.secondaryType, data.secondaryKey)
+end)
+
+CreateThread(function()
+    while true do
+        Wait(0)
+
+        if IsEntityPositionFrozen(PlayerPedId()) then
+            DisableAllControlActions(0)
+        end
+    end
+end)
+
+RegisterNetEvent('ax_inventory:client:updateSecondaryInventory', function(data)
+    if not data or not data.inventory or not data.playerInventory then return end
+    if not inventoryOpen then return end
+
+    if currentSecondaryType ~= data.type or tostring(currentSecondaryKey) ~= tostring(data.key) then
+        return
+    end
+
+    SendNUIMessage({
+        action = 'updateSecondaryInventory',
+        key = data.key,
+        type = data.type,
+        playerInventory = data.playerInventory,
+        inventory = data.inventory,
+        items = data.items or Items
+    })
 end)
