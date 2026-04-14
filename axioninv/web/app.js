@@ -45,6 +45,8 @@ let mouseX = 0;
 let mouseY = 0;
 let dragFrameRequested = false;
 
+let keyMapped = null;
+
 function resetDragState() {
     dragging = false;
     draggedSlot = null;
@@ -694,7 +696,7 @@ closeBtn.addEventListener('click', async (event) => {
 });
 
 window.addEventListener('keydown', async (event) => {
-    if (event.key === 'Escape' || event.key === 'Tab') {
+    if (event.key === 'Escape' || event.key === keyMapped) {
         resetDragState();
         hideContextMenu();
         hideSplitPrompt();
@@ -713,6 +715,7 @@ window.addEventListener('message', (event) => {
         secondaryKey = null;
         secondaryLabel = null;
         itemDefs = data.items || {};
+        keyMapped = data.keyLabel || null;
         app.classList.remove('hidden');
         render();
         return;

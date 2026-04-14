@@ -54,6 +54,18 @@ local function getPlayerLicense(src)
     return nil
 end
 
+local function stopRobberyForSource(src)
+    local targetId = ActiveRobberies[src]
+
+    if targetId then
+        if AxionInv.FreezeOnRob then
+            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
+        end
+
+        ActiveRobberies[src] = nil
+    end
+end
+
 local function getSecondaryViewerId(invType, invKey)
     return tostring(invType) .. ':' .. tostring(invKey)
 end
@@ -428,16 +440,14 @@ lib.callback.register('ax_inventory:server:moveItemBetween', function(source, da
 
         if not getPlayersWithinDistance(source, targetId, AxionInv.RobDistance or 2.0) then
             TriggerClientEvent('ax_inventory:client:forceCloseInventory', source)
-            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
-            ActiveRobberies[source] = nil
+            stopRobberyForSource(source)
             return { ok = false, error = 'target moved away' }
         end
 
         local handsUp = lib.callback.await('ax_inventory:client:isHandsUp', targetId)
         if not handsUp then
             TriggerClientEvent('ax_inventory:client:forceCloseInventory', source)
-            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
-            ActiveRobberies[source] = nil
+            stopRobberyForSource(source)
             return { ok = false, error = 'hands not up' }
         end
     end
@@ -692,40 +702,29 @@ end)
 
 RegisterNetEvent('ax_inventory:server:stopRobbing', function()
     local src = source
-    local targetId = ActiveRobberies[src]
-
-    if targetId then
-        if AxionInv.FreezeOnRob then
-            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
-        end
-
-        ActiveRobberies[src] = nil
-    end
+    stopRobberyForSource(src)
 end)
 
 AddEventHandler('playerDropped', function()
     local src = source
 
-    if ActiveRobberies[src] then
-        local targetId = ActiveRobberies[src]
-
-        if targetId then
-            TriggerClientEvent('ax_inventory:client:setRobFrozen', targetId, false)
-        end
-
-        ActiveRobberies[src] = nil
-    end
+    stopRobberyForSource(src)
+    removePlayerFromAllSecondaryViewers(src)
 
     for robber, target in pairs(ActiveRobberies) do
         if target == src then
+            TriggerClientEvent('ax_inventory:client:forceCloseInventory', robber)
             ActiveRobberies[robber] = nil
         end
     end
-
-    removePlayerFromAllSecondaryViewers(src)
 end)
 
 RegisterNetEvent('ax_inventory:server:closeSecondaryInventory', function(invType, invKey)
     local src = source
     unregisterSecondaryViewer(src, invType, invKey)
+
+    if invType == 'player' then
+        stopRobberyForSource(src)
+    end
 end)
+
