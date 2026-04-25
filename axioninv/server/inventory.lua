@@ -155,20 +155,36 @@ function AddItem(inv, itemName, amount, metadata, slot)
         return false, 'invalid item'
     end
 
-    local maxStack = getMaxStack(itemName)
+    amount = math.floor(tonumber(amount) or 0)
+    if amount < 1 then
+        return false, 'invalid amount'
+    end
 
-    if maxStack > 1 then
+    slot = slot and math.floor(tonumber(slot)) or nil
+    if slot and (slot < 1 or slot > inv.slot_count) then
+        return false, 'slot out of range'
+    end
+
+    local addedWeight = (tonumber(def.weight) or 0) * amount
+    if CalculateInventoryWeight(inv) + addedWeight > inv.max_weight then
+        return false, 'inventory overweight'
+    end
+
+    local maxStack = getMaxStack(itemName)
+    local remaining = amount
+
+    if maxStack > 1 and not slot then
         for existingSlot, existingItem in pairs(inv.items) do
             if existingItem.name == itemName and metadataMatches(existingItem.metadata, metadata) then
                 local spaceLeft = maxStack - existingItem.amount
 
                 if spaceLeft > 0 then
-                    local toAdd = math.min(spaceLeft, amount)
+                    local toAdd = math.min(spaceLeft, remaining)
                     existingItem.amount = existingItem.amount + toAdd
-                    amount = amount - toAdd
+                    remaining = remaining - toAdd
                     SaveSlot(inv, existingSlot)
 
-                    if amount <= 0 then
+                    if remaining <= 0 then
                         return true, existingSlot
                     end
                 end
@@ -176,28 +192,28 @@ function AddItem(inv, itemName, amount, metadata, slot)
         end
     end
 
-    while amount > 0 do
-        slot = slot or FindOpenSlot(inv)
-        if not slot then
+    while remaining > 0 do
+        local targetSlot = slot or FindOpenSlot(inv)
+        if not targetSlot then
             return false, 'no open slot'
         end
 
-        if inv.items[slot] then
+        if inv.items[targetSlot] then
             return false, 'slot occupied'
         end
 
-        local toPlace = math.min(amount, maxStack)
+        local toPlace = math.min(remaining, maxStack)
 
-        inv.items[slot] = {
+        inv.items[targetSlot] = {
             name = itemName,
             amount = toPlace,
-            metadata = metadata,
+            metadata = Utils.deepcopy(metadata or {}),
             durability = def.durability and 100 or nil
         }
 
-        SaveSlot(inv, slot)
+        SaveSlot(inv, targetSlot)
 
-        amount = amount - toPlace
+        remaining = remaining - toPlace
         slot = nil
     end
 
@@ -371,6 +387,8 @@ end
 function RemoveWorldDrop(dropKey)
     Drops[dropKey] = nil
     DB.deleteDrop(dropKey)
+    DB.deleteDropInventory(dropKey)
+    Inventories[('drop:%s:drop'):format(dropKey)] = nil
 
     TriggerClientEvent('ax_inventory:client:removeDrop', -1, dropKey)
 end
@@ -440,6 +458,13 @@ function IsInventoryEmpty(inv)
 end
 
 function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
+    fromSlot = math.floor(tonumber(fromSlot) or 0)
+    toSlot = math.floor(tonumber(toSlot) or 0)
+
+    if fromSlot < 1 or fromSlot > fromInv.slot_count or toSlot < 1 or toSlot > toInv.slot_count then
+        return false, 'slot out of range'
+    end
+
     local sourceItem = fromInv.items[fromSlot]
     if not sourceItem then
         return false, 'missing source item'
@@ -450,16 +475,22 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
         return false, 'missing item definition'
     end
 
-    local maxStack = tonumber(sourceDef.stack) or 1
-    amount = tonumber(amount) or sourceItem.amount
+    local maxStack = getMaxStack(sourceItem.name)
+    amount = math.floor(tonumber(amount) or sourceItem.amount)
 
     if amount < 1 or amount > sourceItem.amount then
         return false, 'invalid amount'
     end
 
+    local movingWeight = (tonumber(sourceDef.weight) or 0) * amount
+    local sameInventory = fromInv.id == toInv.id
+
+    if not sameInventory and CalculateInventoryWeight(toInv) + movingWeight > toInv.max_weight then
+        return false, 'target inventory overweight'
+    end
+
     local targetItem = toInv.items[toSlot]
 
-    -- empty target slot
     if not targetItem then
         if amount > maxStack then
             return false, 'amount exceeds max stack size'
@@ -483,9 +514,8 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
         return true
     end
 
-    local sameMeta = json.encode(targetItem.metadata or {}) == json.encode(sourceItem.metadata or {})
+    local sameMeta = metadataMatches(targetItem.metadata, sourceItem.metadata)
 
-    -- merge into existing stack
     if targetItem.name == sourceItem.name and maxStack > 1 and sameMeta then
         local spaceLeft = maxStack - targetItem.amount
         if spaceLeft <= 0 then
@@ -493,11 +523,6 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
         end
 
         local toMove = math.min(spaceLeft, amount)
-
-        if toMove <= 0 then
-            return false, 'nothing to move'
-        end
-
         targetItem.amount = targetItem.amount + toMove
 
         if toMove == sourceItem.amount then
@@ -511,9 +536,21 @@ function MoveItemBetweenInventories(fromInv, toInv, fromSlot, toSlot, amount)
         return true
     end
 
-    -- only allow full swap on occupied non-stackable/different item
     if amount ~= sourceItem.amount then
         return false, 'cannot split onto occupied slot unless stacking'
+    end
+
+    if not sameInventory then
+        local targetDef = Items[targetItem.name]
+        local targetWeight = ((targetDef and tonumber(targetDef.weight)) or 0) * targetItem.amount
+
+        if CalculateInventoryWeight(fromInv) - movingWeight + targetWeight > fromInv.max_weight then
+            return false, 'source inventory overweight after swap'
+        end
+
+        if CalculateInventoryWeight(toInv) - targetWeight + movingWeight > toInv.max_weight then
+            return false, 'target inventory overweight after swap'
+        end
     end
 
     fromInv.items[fromSlot], toInv.items[toSlot] = toInv.items[toSlot], fromInv.items[fromSlot]

@@ -220,6 +220,58 @@ local function canAccessStash(src, stash)
     return false, 'Invalid stash mode.'
 end
 
+local function notify(src, message, notifyType, duration)
+    if GetResourceState('AxionNotifications') == 'started' then
+        exports['AxionNotifications']:Notify(src, message, notifyType or 'info', duration or 5000)
+    else
+        TriggerClientEvent('chat:addMessage', src, {
+            args = { 'AxionInv', message }
+        })
+    end
+end
+
+local function isPlayerNearCoords(src, coords, maxDistance)
+    local ped = GetPlayerPed(src)
+    if ped == 0 then return false end
+
+    local playerCoords = GetEntityCoords(ped)
+    local targetCoords = vector3(coords.x, coords.y, coords.z)
+
+    return #(playerCoords - targetCoords) <= (maxDistance or 2.0)
+end
+
+local function canUseDrop(src, dropKey, maxDistance)
+    local drop = Drops[dropKey]
+    if not drop then
+        return false, 'drop not found'
+    end
+
+    if not isPlayerNearCoords(src, drop.coords, maxDistance or 2.0) then
+        return false, 'drop too far away'
+    end
+
+    return true, nil, drop
+end
+
+local function canUseStash(src, stashKey, maxDistance)
+    local stash = getStashByKey(stashKey)
+    if not stash then
+        return false, 'invalid stash'
+    end
+
+    if stash.coords and not isPlayerNearCoords(src, stash.coords, maxDistance or 2.0) then
+        return false, 'stash too far away'
+    end
+
+    local allowed, reason = canAccessStash(src, stash)
+    if not allowed then
+        return false, reason or 'access denied'
+    end
+
+    return true, nil, stash
+end
+
+
 lib.callback.register('ax_inventory:server:getPlayerInventory', function(source)
     local inv = GetPlayerInventory(source)
     if not inv then return nil end
@@ -298,8 +350,22 @@ lib.callback.register('ax_inventory:server:dropItem', function(source, slot, amo
         return { ok = false, error = 'failed to get drop inventory' }
     end
 
-    local addSuccess, addResult = AddItem(dropInv, item.name, amount, item.metadata)
+    local itemName = item.name
+    local metadata = Utils.deepcopy(item.metadata)
+
+    local removeSuccess, removeErr = RemoveItemFromSlot(inv, slot, amount)
+    if not removeSuccess then
+        if not merged then
+            RemoveWorldDrop(dropKey)
+        end
+
+        return { ok = false, error = removeErr }
+    end
+
+    local addSuccess, addResult = AddItem(dropInv, itemName, amount, metadata)
     if not addSuccess then
+        AddItem(inv, itemName, amount, metadata, slot)
+
         if not merged then
             RemoveWorldDrop(dropKey)
         end
@@ -307,10 +373,7 @@ lib.callback.register('ax_inventory:server:dropItem', function(source, slot, amo
         return { ok = false, error = addResult or 'failed to add to drop' }
     end
 
-    local removeSuccess, removeErr = RemoveItemFromSlot(inv, slot, amount)
-    if not removeSuccess then
-        return { ok = false, error = removeErr }
-    end
+    refreshSecondaryViewers('drop', dropKey)
 
     return {
         ok = true,
@@ -374,8 +437,11 @@ end)
 
 RegisterNetEvent('ax_inventory:server:openDrop', function(dropKey)
     local src = source
-    local drop = Drops[dropKey]
-    if not drop then return end
+    local allowed, reason = canUseDrop(src, dropKey, 2.0)
+    if not allowed then
+        notify(src, reason or 'Unable to open drop.', 'error', 5000)
+        return
+    end
 
     local playerInv = GetPlayerInventory(src)
     local dropInv = GetInventory('drop', dropKey, 'drop')
@@ -387,8 +453,10 @@ RegisterNetEvent('ax_inventory:server:openDrop', function(dropKey)
     TriggerClientEvent('ax_inventory:client:openSecondaryInventory', src, {
         key = dropKey,
         type = 'drop',
+        label = 'Ground Drop',
         playerInventory = Inventory.BuildPayload(playerInv),
-        inventory = Inventory.BuildPayload(dropInv)
+        inventory = Inventory.BuildPayload(dropInv),
+        items = Items
     })
 end)
 
@@ -409,8 +477,18 @@ lib.callback.register('ax_inventory:server:moveItemBetween', function(source, da
     local secondaryInv = nil
 
     if secondaryType == 'drop' and secondaryKey then
+        local allowed, reason = canUseDrop(source, secondaryKey, 2.0)
+        if not allowed then
+            return { ok = false, error = reason or 'drop access denied' }
+        end
+
         secondaryInv = GetInventory('drop', secondaryKey, 'drop')
     elseif secondaryType == 'stash' and secondaryKey then
+        local allowed, reason = canUseStash(source, secondaryKey, 2.0)
+        if not allowed then
+            return { ok = false, error = reason or 'stash access denied' }
+        end
+
         secondaryInv = GetInventory('stash', secondaryKey, 'stash')
     elseif secondaryType == 'player' and secondaryKey then
         local targetId = tonumber(secondaryKey)
@@ -439,14 +517,14 @@ lib.callback.register('ax_inventory:server:moveItemBetween', function(source, da
         local targetId = tonumber(secondaryKey)
 
         if not getPlayersWithinDistance(source, targetId, AxionInv.RobDistance or 2.0) then
-            TriggerClientEvent('ax_inventory:client:forceCloseInventory', source)
+            TriggerClientEvent('ax_inventory:client:forceClose', source)
             stopRobberyForSource(source)
             return { ok = false, error = 'target moved away' }
         end
 
         local handsUp = lib.callback.await('ax_inventory:client:isHandsUp', targetId)
         if not handsUp then
-            TriggerClientEvent('ax_inventory:client:forceCloseInventory', source)
+            TriggerClientEvent('ax_inventory:client:forceClose', source)
             stopRobberyForSource(source)
             return { ok = false, error = 'hands not up' }
         end
@@ -498,8 +576,18 @@ lib.callback.register('ax_inventory:server:moveSecondaryItem', function(source, 
     local inv = nil
 
     if secondaryType == 'drop' and secondaryKey then
+        local allowed, reason = canUseDrop(source, secondaryKey, 2.0)
+        if not allowed then
+            return { ok = false, error = reason or 'drop access denied' }
+        end
+
         inv = GetInventory('drop', secondaryKey, 'drop')
     elseif secondaryType == 'stash' and secondaryKey then
+        local allowed, reason = canUseStash(source, secondaryKey, 2.0)
+        if not allowed then
+            return { ok = false, error = reason or 'stash access denied' }
+        end
+
         inv = GetInventory('stash', secondaryKey, 'stash')
     elseif secondaryType == 'player' and secondaryKey then
         return { ok = false, error = 'cannot reorder robbed player inventory' }
@@ -588,6 +676,11 @@ RegisterNetEvent('ax_inventory:server:buyStash', function(stashKey)
     local stash = getStashByKey(stashKey)
     if not stash or stash.mode ~= 'owned' then return end
 
+    if stash.coords and not isPlayerNearCoords(src, stash.coords, 2.0) then
+        notify(src, 'You are too far away from this stash.', 'error', 5000)
+        return
+    end
+
     local existing = getOwnedStash(stashKey)
     if existing then
         exports['AxionNotifications']:Notify(src, "This stash is already owned.", "error", 5000)
@@ -615,16 +708,14 @@ end)
 
 RegisterNetEvent('ax_inventory:server:openStash', function(stashKey)
     local src = source
-    local stash = getStashByKey(stashKey)
-    if not stash then return end
-
-    local allowed, reason = canAccessStash(src, stash)
+    local allowed, reason, stash = canUseStash(src, stashKey, 2.0)
 
     if not allowed then
         if reason == 'unowned' then
-            exports['AxionNotifications']:Notify(src, ('This stash is unowned. Price: $%s'):format(stash.price or 0), "info", 5000)
+            local stashCfg = getStashByKey(stashKey)
+            notify(src, ('This stash is unowned. Price: $%s'):format(stashCfg and stashCfg.price or 0), 'info', 5000)
         else
-            exports['AxionNotifications']:Notify(src, reason or "Access denied.", "error", 5000)
+            notify(src, reason or 'Access denied.', 'error', 5000)
         end
         return
     end
@@ -713,7 +804,7 @@ AddEventHandler('playerDropped', function()
 
     for robber, target in pairs(ActiveRobberies) do
         if target == src then
-            TriggerClientEvent('ax_inventory:client:forceCloseInventory', robber)
+            TriggerClientEvent('ax_inventory:client:forceClose', robber)
             ActiveRobberies[robber] = nil
         end
     end
