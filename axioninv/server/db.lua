@@ -91,8 +91,8 @@ function DB.fetchExpiredDrops(ageMinutes)
         FROM inventories
         WHERE inventory_type = "drop"
         AND created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
-        ORDER BY created_at ASC;]],
-    { ageMinutes })
+        ORDER BY created_at ASC;
+        ]], { ageMinutes })
 end
 
 function DB.deleteDropInventory(dropKey)
