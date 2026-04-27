@@ -203,7 +203,7 @@ function requestDragFrame() {
     });
 }
 
-function formatItemWeight(weight, amount = 1) {
+function formatWeight(weight, amount = 1) {
     const total = Number(weight || 0) * Number(amount || 1);
 
     if (total >= 1000) {
@@ -221,8 +221,8 @@ function showItemTooltip(item, def, x, y) {
     itemTooltip.innerHTML = `
         <div class="item-tooltip-title">${def.label || item.name}</div>
         <div class="item-tooltip-meta">
-            Weight: ${formatItemWeight(singleWeight)} each<br>
-            Stack: ${formatItemWeight(singleWeight, item.amount)} total
+            Weight: ${formatWeight(singleWeight)} each<br>
+            Stack: ${formatWeight(singleWeight, item.amount)} total
         </div>
         <div class="item-tooltip-desc">${def.description || 'No description.'}</div>
     `;
@@ -266,7 +266,7 @@ function renderInventoryPanel(panelName, gridEl, inventory, weightEl) {
         return;
     }
 
-    weightEl.textContent = `${inventory.currentWeight} g / ${inventory.maxWeight} g`;
+    weightEl.textContent = `${formatWeight(inventory.currentWeight)} / ${formatWeight(inventory.maxWeight)}`;
 
     for (let i = 1; i <= inventory.slots; i++) {
         const slotEl = document.createElement('div');

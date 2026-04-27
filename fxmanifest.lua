@@ -2,10 +2,10 @@ fx_version 'cerulean'
 game 'gta5'
 lua54 'yes'
 
-name 'ax_inventory'
+name 'AxionInv'
 author 'AxionDevelopment | SpunkyDunkie'
 description 'SQL-backed modular inventory base'
-version '0.2.1'
+version '0.2.2'
 
 ui_page 'axioninv/web/index.html'
 
@@ -20,7 +20,7 @@ shared_scripts {
     '@ox_lib/init.lua',
     'configs/items.lua',
     'configs/inventories.lua',
-    'configs/config.lua',
+    'configs/axioninv.config.lua',
     'axioninv/shared/utils.lua'
 }
 
